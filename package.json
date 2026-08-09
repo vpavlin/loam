@@ -1,0 +1,10 @@
+{
+  "name": "logos-shared-delivery",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Prototype: one shared liblogosdelivery (Waku) node per phone, multiplexed across all Logos apps.",
+  "scripts": {
+    "demo": "node demo/demo.mjs"
+  }
+}
