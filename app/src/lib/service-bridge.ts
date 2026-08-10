@@ -24,6 +24,9 @@ const queued = new Map<string, string[]>();                    // callerKey -> t
 const active = new Set<string>();                              // callerKey registered as a tenant
 let onChange: (() => void) | null = null;
 
+function pushAuthorized() {
+  try { Bridge?.setAuthorized(JSON.stringify([...grants.values()].filter((g) => g.granted).map((g) => g.callerKey))); } catch { /* */ }
+}
 async function persist() {
   try { await FileSystem.writeAsStringAsync(GRANTS, JSON.stringify([...grants.values()])); } catch { /* */ }
 }
@@ -47,6 +50,7 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
   if (!Bridge || !emitter) return false;
   onChange = change;
   await loadGrants();
+  pushAuthorized();
   emitter.addListener("logosDeliveryRequest", async (r: any) => {
     try {
       const ck = r.callerKey as string;
@@ -63,6 +67,12 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
         else { const q = queued.get(ck) || []; q.push(r.topic); queued.set(ck, q); }   // buffer until approved
       } else if (r.kind === "send") {
         if (active.has(ck)) await transport.publishSealed(r.topic, toByteArray(r.sealedB64));   // ungranted sends dropped
+      } else if (r.kind === "touch") {
+        if (!grants.get(ck)?.granted && !pending.has(ck)) {
+          pending.set(ck, { callerKey: ck, appId: r.appId || "", pkg: r.pkg, cert: r.cert, label: r.label });
+          try { await Notifications.scheduleNotificationAsync({ content: { title: "Allow an app to use Logos Delivery?", body: `${r.label} wants to use the shared node — tap to review.` }, trigger: null }); } catch { /* */ }
+          onChange && onChange();
+        }
       } else if (r.kind === "unregister") {
         active.delete(ck); await transport.unregisterClient(ck); onChange && onChange();
       }
@@ -74,7 +84,7 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
 // ---- consent actions (called from the UI) ----
 export async function approve(callerKey: string) {
   const c = pending.get(callerKey); if (!c) return;
-  grants.set(callerKey, { ...c, granted: true }); await persist();
+  grants.set(callerKey, { ...c, granted: true }); await persist(); pushAuthorized();
   pending.delete(callerKey);
   activate(callerKey);
   for (const t of queued.get(callerKey) || []) { try { await transport.clientSubscribe(callerKey, t); } catch { /* */ } }
@@ -83,7 +93,7 @@ export async function approve(callerKey: string) {
 }
 export async function deny(callerKey: string) { pending.delete(callerKey); queued.delete(callerKey); onChange && onChange(); }
 export async function revoke(callerKey: string) {
-  grants.delete(callerKey); await persist();
+  grants.delete(callerKey); await persist(); pushAuthorized();
   active.delete(callerKey); try { await transport.unregisterClient(callerKey); } catch { /* */ }
   onChange && onChange();
 }
