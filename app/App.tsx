@@ -22,8 +22,8 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        let m: Mode = "Core";
-        try { m = ((await SecureStore.getItemAsync("logos-delivery-nodemode")) as Mode) || "Core"; } catch { /* */ }
+        let m: Mode = "Edge";
+        try { m = ((await SecureStore.getItemAsync("logos-delivery-nodemode")) as Mode) || "Edge"; } catch { /* */ }
         setMode(m); transport.setNodeMode(m);
         try { await Notifications.requestPermissionsAsync(); } catch { /* */ }
         const deviceId = await getDeviceId();
@@ -60,13 +60,13 @@ export default function App() {
 
       <Text style={s.label}>NODE MODE</Text>
       <View style={s.row}>
-        {(["Core", "Edge"] as Mode[]).map((m) => (
+        {(["Edge", "Core"] as Mode[]).map((m) => (
           <TouchableOpacity key={m} style={[s.chip, mode === m && s.chipOn]} onPress={() => pick(m)}>
             <Text style={[s.chipT, mode === m && s.chipTOn]}>{m}</Text>
           </TouchableOpacity>
         ))}
       </View>
-      <Text style={s.hint}>{mode === "Edge" ? "Edge: lighter on battery/data. Relaunch to apply." : "Core: full relay node (default). Relaunch to apply a change."}</Text>
+      <Text style={s.hint}>{mode === "Edge" ? "Edge (default) — light on battery & data; works on mobile and WiFi. Relaunch to apply." : "Core — relays the shard for the network; best on stable WiFi/power. Relaunch to apply."}</Text>
 
       {pending.length > 0 && <>
         <Text style={s.label}>REQUESTS</Text>
