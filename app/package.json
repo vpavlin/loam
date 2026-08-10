@@ -1,0 +1,34 @@
+{
+  "name": "logos-delivery-service",
+  "version": "0.0.1",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "prebuild": "expo prebuild --platform android",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^1.0.0",
+    "@noble/curves": "^1.8.1",
+    "@noble/hashes": "^1.4.0",
+    "base64-js": "^1.5.1",
+    "expo": "~51.0.0",
+    "expo-camera": "~15.0.16",
+    "expo-clipboard": "~6.0.3",
+    "expo-crypto": "~13.0.2",
+    "expo-notifications": "~0.28.19",
+    "expo-secure-store": "~13.0.0",
+    "react": "18.2.0",
+    "react-native": "0.74.0",
+    "react-native-background-actions": "^4.0.1",
+    "react-native-qrcode-svg": "^6.3.21",
+    "react-native-svg": "15.2.0"
+  },
+  "expo": {
+    "install": {
+      "exclude": []
+    }
+  },
+  "comment": "Android-first (arm64 only - no public x86_64 liblogosdelivery.so; test on a real phone). The Logos delivery integration is a hand-written JNI bridge re-applied on every `expo prebuild` by plugins/withLogosDelivery.js (Expo CNG wipes android/)."
+}

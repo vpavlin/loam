@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Logos Delivery",
+    "slug": "logos-delivery",
+    "version": "0.0.1",
+    "platforms": [
+      "android"
+    ],
+    "icon": "./assets/icon.png",
+    "experiments": {
+      "onDemandFilesystem": false
+    },
+    "android": {
+      "package": "co.logos.delivery",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundImage": "./assets/adaptive-bg.png",
+        "backgroundColor": "#000000"
+      },
+      "backgroundColor": "#141415"
+    },
+    "plugins": [
+      "./plugins/withSplashColor.js",
+      "./plugins/withReleaseSigning.js",
+      "./plugins/withLogosDelivery.js",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#ffc533"
+        }
+      ],
+      "./plugins/withForegroundService.js"
+    ],
+    "extra": {
+      "comment": "versionCode here is the source of truth; assert it matches the generated android/app/build.gradle after prebuild."
+    },
+    "androidStatusBar": {
+      "backgroundColor": "#141415",
+      "barStyle": "light-content",
+      "translucent": false
+    },
+    "backgroundColor": "#141415",
+    "scheme": "logosdelivery"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+android/
+ios/
+dist/
+*.log
+*.apk
+.DS_Store
+*.orig.*
+web-build/
