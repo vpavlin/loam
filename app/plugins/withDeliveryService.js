@@ -55,20 +55,23 @@ const withAidlFeature = (config) =>
 const withManifest = (config) =>
   withAndroidManifest(config, (cfg) => {
     const m = cfg.modResults;
-    // top-level signature permission
-    m.manifest.permission = m.manifest.permission || [];
-    if (!m.manifest.permission.find((p) => p.$ && p.$["android:name"] === PERMISSION)) {
-      m.manifest.permission.push({ $: { "android:name": PERMISSION, "android:protectionLevel": "signature" } });
+    // Exported bound service with NO permission gate: ANY app may bind, but a bind alone
+    // does nothing — the real gate is USER CONSENT ("Allow App X?") + the server-verified
+    // caller signing cert (see LogosDeliveryService). A signature permission would block
+    // third-party (different-key) apps, defeating the consent model, so we don't use one.
+    // Strip any previously-added top-level permission definition.
+    if (Array.isArray(m.manifest.permission)) {
+      m.manifest.permission = m.manifest.permission.filter((p) => !(p.$ && p.$["android:name"] === PERMISSION));
     }
-    // exported bound service, gated by the permission
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(m);
     app.service = app.service || [];
-    if (!app.service.find((s) => s.$ && s.$["android:name"] === SERVICE)) {
-      app.service.push({
-        $: { "android:name": SERVICE, "android:exported": "true", "android:permission": PERMISSION },
-        "intent-filter": [{ action: [{ $: { "android:name": "co.logos.delivery.ILogosDelivery" } }] }],
-      });
+    let svc = app.service.find((s) => s.$ && s.$["android:name"] === SERVICE);
+    if (!svc) {
+      svc = { $: { "android:name": SERVICE }, "intent-filter": [{ action: [{ $: { "android:name": "co.logos.delivery.ILogosDelivery" } }] }] };
+      app.service.push(svc);
     }
+    svc.$["android:exported"] = "true";
+    delete svc.$["android:permission"];   // no permission gate — consent is the gate (idempotent)
     return cfg;
   });
 
