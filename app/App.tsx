@@ -1,28 +1,27 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import * as transport from "./src/lib/logos-transport";
 import { getDeviceId } from "./src/lib/device";
 import { startKeepAlive } from "./src/lib/keepalive";
-import { startServiceBridge } from "./src/lib/service-bridge";
+import { initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, Client } from "./src/lib/service-bridge";
 
-// Increment 1: a standalone app that runs ONE liblogosdelivery node (via the shared
-// logos-transport) inside a foreground service. This IS the device-wide node, so its
-// Core/Edge choice is the whole phone's battery/data setting. AIDL (other apps bind) is next.
+// The device-wide shared delivery node. It runs ONE liblogosdelivery node in a foreground
+// service; other apps bind over AIDL and — once YOU approve them — sync through this one node.
 const PROBE_TOPIC = "/logos-delivery/1/probe/proto";
 type Mode = "Core" | "Edge";
+const shortCert = (c: string) => (c ? c.slice(0, 10) + "…" : "?");
 
 export default function App() {
   const [status, setStatus] = useState("starting…");
   const [fg, setFg] = useState("foreground service: …");
   const [info, setInfo] = useState("");
-  const [mode, setMode] = useState<Mode>("Core");   // the mode the node STARTED with
-  const [ipc, setIpc] = useState("IPC: …");
+  const [mode, setMode] = useState<Mode>("Core");
+  const [tick, setTick] = useState(0);   // bump to re-read consent lists
   useEffect(() => {
     (async () => {
       try {
-        // Core/Edge is read only at node start — load + apply BEFORE transport.start.
         let m: Mode = "Core";
         try { m = ((await SecureStore.getItemAsync("logos-delivery-nodemode")) as Mode) || "Core"; } catch { /* */ }
         setMode(m); transport.setNodeMode(m);
@@ -30,7 +29,7 @@ export default function App() {
         const deviceId = await getDeviceId();
         await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => false, onStatus: setStatus });
         setFg("foreground service: " + (await startKeepAlive()));
-        setIpc(startServiceBridge((n) => setIpc(`IPC: ${n} app${n === 1 ? "" : "s"} bound`)) ? "IPC: ready — no apps bound yet" : "IPC: unavailable");
+        await initServiceBridge(() => setTick((n) => n + 1));
       } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
     })();
     const t = setInterval(async () => {
@@ -41,18 +40,17 @@ export default function App() {
     return () => clearInterval(t);
   }, []);
 
-  // Persist a new mode; it takes effect on next launch (mode is read at node start).
   const pick = async (m: Mode) => { try { await SecureStore.setItemAsync("logos-delivery-nodemode", m); } catch { /* */ } setMode(m); };
+  const { pending, granted } = serviceBridgeAvailable() ? lists() : { pending: [] as Client[], granted: [] as any[] };
 
   return (
-    <View style={s.c}>
+    <ScrollView style={s.scroll} contentContainerStyle={s.c}>
       <Text style={s.title}>Logos Delivery</Text>
       <Text style={s.sub}>shared node · one per phone</Text>
       <View style={s.card}>
         <Text style={s.status}>{status}</Text>
         <Text style={s.info}>{info}</Text>
         <Text style={s.fg}>{fg}</Text>
-        <Text style={s.fg}>{ipc}</Text>
       </View>
 
       <Text style={s.label}>NODE MODE</Text>
@@ -63,28 +61,61 @@ export default function App() {
           </TouchableOpacity>
         ))}
       </View>
-      <Text style={s.hint}>{mode === "Edge"
-        ? "Edge: lighter on battery/data — no shard relay, publishes via lightpush. Relaunch to apply."
-        : "Core: full relay node — the reliable default for the device-wide node. Relaunch to apply a change."}</Text>
+      <Text style={s.hint}>{mode === "Edge" ? "Edge: lighter on battery/data. Relaunch to apply." : "Core: full relay node (default). Relaunch to apply a change."}</Text>
 
-      <Text style={s.note}>Increment 1 — standalone node in a foreground service.{"\n"}Next: AIDL so qaku &amp; kym bind to this one node.</Text>
-    </View>
+      {pending.length > 0 && <>
+        <Text style={s.label}>REQUESTS</Text>
+        {pending.map((c) => (
+          <View key={c.callerKey} style={s.reqCard}>
+            <Text style={s.appName}>{c.label}</Text>
+            <Text style={s.appMeta}>{c.pkg}{"\n"}id {c.appId} · cert {shortCert(c.cert)}</Text>
+            <Text style={s.ask}>wants to use the shared node</Text>
+            <View style={s.row2}>
+              <TouchableOpacity style={[s.btn, s.deny]} onPress={() => deny(c.callerKey)}><Text style={s.btnT}>Deny</Text></TouchableOpacity>
+              <TouchableOpacity style={[s.btn, s.allow]} onPress={() => approve(c.callerKey)}><Text style={[s.btnT, { color: "#fff" }]}>Allow</Text></TouchableOpacity>
+            </View>
+          </View>
+        ))}
+      </>}
+
+      <Text style={s.label}>APPROVED APPS {granted.length ? `(${granted.length})` : ""}</Text>
+      {granted.length === 0
+        ? <Text style={s.empty}>No apps approved yet. When an app asks, you'll see a request above.</Text>
+        : granted.map((g: any) => (
+          <View key={g.callerKey} style={s.grantRow}>
+            <View style={{ flex: 1 }}><Text style={s.appName}>{g.label}</Text><Text style={s.appMeta}>{g.pkg} · {shortCert(g.cert)}</Text></View>
+            <TouchableOpacity style={[s.btn, s.deny]} onPress={() => revoke(g.callerKey)}><Text style={s.btnT}>Revoke</Text></TouchableOpacity>
+          </View>
+        ))}
+
+      <Text style={s.note}>Apps you approve sync through this one node. Traffic stays end-to-end encrypted per app — the service only moves sealed bytes.</Text>
+    </ScrollView>
   );
 }
 const s = StyleSheet.create({
-  c: { flex: 1, backgroundColor: "#0d1117", alignItems: "center", justifyContent: "center", padding: 24 },
+  scroll: { flex: 1, backgroundColor: "#0d1117" },
+  c: { alignItems: "center", padding: 24, paddingTop: 64, paddingBottom: 48 },
   title: { color: "#e6e9ef", fontSize: 30, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: "#28c2d1", fontSize: 13, marginBottom: 24, fontFamily: "monospace", letterSpacing: 1 },
-  card: { backgroundColor: "#151b23", borderColor: "#252d38", borderWidth: 1, borderRadius: 14, paddingVertical: 20, paddingHorizontal: 28, alignItems: "center", minWidth: 260 },
-  status: { color: "#e6e9ef", fontSize: 18, marginBottom: 8 },
+  sub: { color: "#28c2d1", fontSize: 13, marginBottom: 22, fontFamily: "monospace", letterSpacing: 1 },
+  card: { backgroundColor: "#151b23", borderColor: "#252d38", borderWidth: 1, borderRadius: 14, paddingVertical: 18, paddingHorizontal: 26, alignItems: "center", minWidth: 280 },
+  status: { color: "#e6e9ef", fontSize: 17, marginBottom: 6 },
   info: { color: "#8b94a3", fontSize: 13, fontFamily: "monospace" },
-  fg: { color: "#28c2d1", fontSize: 12, fontFamily: "monospace", marginTop: 8 },
-  label: { color: "#57616e", fontSize: 11, fontFamily: "monospace", letterSpacing: 1.5, marginTop: 28, marginBottom: 8 },
-  row: { flexDirection: "row", gap: 10 },
-  chip: { borderColor: "#252d38", borderWidth: 1, borderRadius: 9, paddingVertical: 9, paddingHorizontal: 28 },
+  fg: { color: "#28c2d1", fontSize: 12, fontFamily: "monospace", marginTop: 6 },
+  label: { color: "#57616e", fontSize: 11, fontFamily: "monospace", letterSpacing: 1.5, marginTop: 26, marginBottom: 8, alignSelf: "flex-start" },
+  row: { flexDirection: "row", gap: 10, alignSelf: "flex-start" },
+  row2: { flexDirection: "row", gap: 10, marginTop: 12 },
+  chip: { borderColor: "#252d38", borderWidth: 1, borderRadius: 9, paddingVertical: 8, paddingHorizontal: 26 },
   chipOn: { backgroundColor: "#0b8f9c", borderColor: "#0b8f9c" },
-  chipT: { color: "#8b94a3", fontSize: 15, fontWeight: "700" },
-  chipTOn: { color: "#ffffff" },
-  hint: { color: "#57616e", fontSize: 11, marginTop: 10, textAlign: "center", lineHeight: 16, maxWidth: 300 },
-  note: { color: "#57616e", fontSize: 12, marginTop: 30, textAlign: "center", lineHeight: 18 },
+  chipT: { color: "#8b94a3", fontSize: 15, fontWeight: "700" }, chipTOn: { color: "#fff" },
+  hint: { color: "#57616e", fontSize: 11, marginTop: 8, alignSelf: "flex-start" },
+  reqCard: { backgroundColor: "#151b23", borderColor: "#0b8f9c", borderWidth: 1, borderRadius: 12, padding: 16, width: "100%", marginBottom: 10 },
+  appName: { color: "#e6e9ef", fontSize: 16, fontWeight: "700" },
+  appMeta: { color: "#8b94a3", fontSize: 11, fontFamily: "monospace", marginTop: 3 },
+  ask: { color: "#28c2d1", fontSize: 13, marginTop: 8 },
+  btn: { flex: 1, borderRadius: 9, paddingVertical: 11, alignItems: "center" },
+  allow: { backgroundColor: "#0b8f9c" }, deny: { borderColor: "#3a2530", borderWidth: 1, backgroundColor: "#1a1116", flex: 0, paddingHorizontal: 20 },
+  btnT: { color: "#c99", fontSize: 14, fontWeight: "700" },
+  grantRow: { flexDirection: "row", alignItems: "center", backgroundColor: "#151b23", borderColor: "#252d38", borderWidth: 1, borderRadius: 12, padding: 14, width: "100%", marginBottom: 8, gap: 10 },
+  empty: { color: "#57616e", fontSize: 13, alignSelf: "flex-start", lineHeight: 18 },
+  note: { color: "#57616e", fontSize: 11, marginTop: 32, textAlign: "center", lineHeight: 17 },
 });
