@@ -2,7 +2,7 @@
   "expo": {
     "name": "Logos Delivery",
     "slug": "logos-delivery",
-    "version": "0.0.7",
+    "version": "0.0.8",
     "platforms": [
       "android"
     ],
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "co.logos.delivery",
-      "versionCode": 7,
+      "versionCode": 8,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/adaptive-bg.png",

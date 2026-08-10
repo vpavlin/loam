@@ -35,8 +35,12 @@ export default function App() {
     const t = setInterval(async () => {
       try { await transport.refreshPeerInfo(); } catch { /* */ }
       const c = transport.counters;
-      setInfo(`peers ${c.peers}   mesh ${c.mesh}   rx ${c.rxRaw}`);
-      pushMetrics(c.peers, c.mesh);   // expose to bound clients over AIDL
+      // Edge has no relay mesh by design (filter/lightpush) — report deliverable peers
+      // as "mesh" so clients read Edge as connected, not "forming". Core keeps real mesh.
+      const edge = transport.getNodeMode() === "Edge";
+      const meshVal = edge && c.peers > 0 ? c.peers : c.mesh;
+      setInfo(`peers ${c.peers}   mesh ${c.mesh}${edge ? " (edge)" : ""}   rx ${c.rxRaw}`);
+      pushMetrics(c.peers, meshVal);   // expose to bound clients over AIDL
     }, 3000);
     return () => clearInterval(t);
   }, []);
