@@ -2,7 +2,7 @@
   "expo": {
     "name": "Logos Delivery",
     "slug": "logos-delivery",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "platforms": [
       "android"
     ],
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "co.logos.delivery",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/adaptive-bg.png",
@@ -31,7 +31,8 @@
           "color": "#ffc533"
         }
       ],
-      "./plugins/withForegroundService.js"
+      "./plugins/withForegroundService.js",
+      "./plugins/withDeliveryService.js"
     ],
     "extra": {
       "comment": "versionCode here is the source of truth; assert it matches the generated android/app/build.gradle after prebuild."

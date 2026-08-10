@@ -5,6 +5,7 @@ import * as Notifications from "expo-notifications";
 import * as transport from "./src/lib/logos-transport";
 import { getDeviceId } from "./src/lib/device";
 import { startKeepAlive } from "./src/lib/keepalive";
+import { startServiceBridge } from "./src/lib/service-bridge";
 
 // Increment 1: a standalone app that runs ONE liblogosdelivery node (via the shared
 // logos-transport) inside a foreground service. This IS the device-wide node, so its
@@ -17,6 +18,7 @@ export default function App() {
   const [fg, setFg] = useState("foreground service: …");
   const [info, setInfo] = useState("");
   const [mode, setMode] = useState<Mode>("Core");   // the mode the node STARTED with
+  const [ipc, setIpc] = useState("IPC: …");
   useEffect(() => {
     (async () => {
       try {
@@ -28,6 +30,7 @@ export default function App() {
         const deviceId = await getDeviceId();
         await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => false, onStatus: setStatus });
         setFg("foreground service: " + (await startKeepAlive()));
+        setIpc(startServiceBridge((n) => setIpc(`IPC: ${n} app${n === 1 ? "" : "s"} bound`)) ? "IPC: ready — no apps bound yet" : "IPC: unavailable");
       } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
     })();
     const t = setInterval(async () => {
@@ -49,6 +52,7 @@ export default function App() {
         <Text style={s.status}>{status}</Text>
         <Text style={s.info}>{info}</Text>
         <Text style={s.fg}>{fg}</Text>
+        <Text style={s.fg}>{ipc}</Text>
       </View>
 
       <Text style={s.label}>NODE MODE</Text>
