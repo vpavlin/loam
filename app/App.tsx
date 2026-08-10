@@ -5,7 +5,7 @@ import * as Notifications from "expo-notifications";
 import * as transport from "./src/lib/logos-transport";
 import { getDeviceId } from "./src/lib/device";
 import { startKeepAlive } from "./src/lib/keepalive";
-import { initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, Client } from "./src/lib/service-bridge";
+import { initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, pushMetrics, Client } from "./src/lib/service-bridge";
 
 // The device-wide shared delivery node. It runs ONE liblogosdelivery node in a foreground
 // service; other apps bind over AIDL and — once YOU approve them — sync through this one node.
@@ -36,6 +36,7 @@ export default function App() {
       try { await transport.refreshPeerInfo(); } catch { /* */ }
       const c = transport.counters;
       setInfo(`peers ${c.peers}   mesh ${c.mesh}   rx ${c.rxRaw}`);
+      pushMetrics(c.peers, c.mesh);   // expose to bound clients over AIDL
     }, 3000);
     return () => clearInterval(t);
   }, []);

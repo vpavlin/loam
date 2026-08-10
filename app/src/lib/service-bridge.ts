@@ -11,6 +11,8 @@ import * as transport from "./logos-transport";
 const Bridge = (NativeModules as any).LogosDeliveryBridge;
 const emitter = Bridge ? new NativeEventEmitter(Bridge) : null;
 export function serviceBridgeAvailable(): boolean { return !!Bridge; }
+// Cache the node's live peers/mesh natively so bound clients can read it over AIDL.
+export function pushMetrics(peers: number, mesh: number) { try { Bridge?.setMetrics(JSON.stringify({ peers, mesh })); } catch { /* */ } }
 
 const GRANTS = (FileSystem.documentDirectory || "") + "logos-delivery-grants.json";
 export type Client = { callerKey: string; appId: string; pkg: string; cert: string; label: string };
