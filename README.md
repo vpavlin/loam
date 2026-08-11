@@ -36,6 +36,8 @@ So sharing can't be a singleton library each app loads (that's today's duplicati
 - **IPC** — a bound-service API (AIDL) gated by **per-caller user consent** ("Allow App X?"), not a signature permission. The service resolves each binding caller's `(package + signing-cert sha256)` and grants access per identity — so a repackaged/re-signed app is a new, unapproved caller, and third-party (different-key) apps can still bind *with the owner's consent*. Unapproved callers get `{authorized:false}` and no node health.
 - **Client shim** — each app's `logos-transport` talks to the service when present, and **falls back to an embedded node** when it isn't, so every app still runs standalone.
 
+> **Security / isolation** — how one app is prevented from reading, forging, or interfering with another's data (end-to-end AEAD, per-caller consent, broker routing) plus the residual risks and recommended changes: see [`SECURITY.md`](SECURITY.md).
+
 This is the desktop host role (one component owns delivery, app cores are its clients) ported to an Android process boundary. Note: the desktop does **not** currently share a node either — each core creates its own — but it proves the enabler: **one node already multiplexes many content topics across many shards** (qaku: a channel per Q&A session; kym: per budget).
 
 ## What's in here
