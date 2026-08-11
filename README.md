@@ -48,8 +48,8 @@ This is the desktop host role (one component owns delivery, app cores are its cl
 | `src/shard.mjs` | `shardFor()` ported verbatim from the apps' transport | **real** (matches prod) |
 | `src/mock-node.mjs` | In-memory `UnderlyingNode` for tests on any machine | **real** |
 | `demo/demo.mjs` | Runnable proof of the four claims below | **real, 11/11 passing** |
-| `aidl/*.aidl` | The Android IPC surface (service + callback) — original sketch | **realized** in `app/native/deliveryservice/aidl` |
-| `client/logos-transport-client.mjs` | App-side shim: shared-if-present, else embedded — original sketch | **realized** as `ServiceNode` + `preferServiceBackend(true, appId)` in the transport pkg |
+| `aidl/*.aidl` | The Android IPC surface (service + callback) | **real** — shipped in `app/native/deliveryservice/aidl` |
+| `client/logos-transport-client.mjs` | App-side shim: shared-if-present, else embedded | **real** — `ServiceNode` + `preferServiceBackend(true, appId)` in the transport pkg |
 
 `UnderlyingNode` contract (what `MockNode` implements and `RealNode` wraps):
 
