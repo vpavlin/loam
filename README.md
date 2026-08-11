@@ -2,10 +2,10 @@
 
 **One `liblogosdelivery` (Waku) node per phone, shared by every Logos app** — instead of qaku, kym, the VPN, and each future app embedding its own in-process node.
 
-This repo is both the **design doc** and a **runnable prototype** of the sharing layer.
+This repo is the **design doc**, the original **runnable prototype** (`demo/`, still passing), and now the **`co.logos.delivery` service app** (`app/`) that implements it — a Kotlin foreground service + AIDL wrapping the shared `logos-transport` broker, which apps bind to over IPC.
 
 ```
-node demo/demo.mjs        # proves the core thesis, no arm64 node needed
+node demo/demo.mjs        # proves the core thesis (broker/routing), no arm64 node needed
 ```
 
 ---
@@ -33,7 +33,7 @@ So sharing can't be a singleton library each app loads (that's today's duplicati
 
 - **Node owner** — wraps the identical JNI; brings up exactly one node; owns the single Core/Edge choice, discovery, reconnection for the whole device.
 - **Broker** — a `contentTopic → app` routing table. Each app registers its topics; inbound messages are dispatched to the owning app. Isolation is inherent: an app never receives a foreign topic, and couldn't decrypt it if it did (per-app AEAD key).
-- **IPC** — a bound-service API (AIDL) gated by a **signature permission**, so only trusted Logos apps may bind.
+- **IPC** — a bound-service API (AIDL) gated by **per-caller user consent** ("Allow App X?"), not a signature permission. The service resolves each binding caller's `(package + signing-cert sha256)` and grants access per identity — so a repackaged/re-signed app is a new, unapproved caller, and third-party (different-key) apps can still bind *with the owner's consent*. Unapproved callers get `{authorized:false}` and no node health.
 - **Client shim** — each app's `logos-transport` talks to the service when present, and **falls back to an embedded node** when it isn't, so every app still runs standalone.
 
 This is the desktop host role (one component owns delivery, app cores are its clients) ported to an Android process boundary. Note: the desktop does **not** currently share a node either — each core creates its own — but it proves the enabler: **one node already multiplexes many content topics across many shards** (qaku: a channel per Q&A session; kym: per budget).
@@ -42,13 +42,14 @@ This is the desktop host role (one component owns delivery, app cores are its cl
 
 | Path | What it is | Status |
 |------|-----------|--------|
-| `src/broker.mjs` | `SharedDeliveryNode` + `Tenant` — the multi-tenant broker (the seam) | **real, tested** |
+| `app/` | **`co.logos.delivery` — the shared node service.** Expo/RN app: runs `SharedDeliveryNode`+`RealNode` from the transport package behind a Kotlin **foreground service + AIDL** (`app/native/deliveryservice`); other apps bind as broker `Tenant`s | **built — Service 0.0.10**, on-device iteration (KYM reference) |
+| `app/src/lib/logos-transport-pkg` | The shared TS transport (submodule → `vpavlin/logos-transport`): broker + `RealNode` + `ServiceNode` + JNI | **real, on-device proven** (qaku/kym ship it) |
+| `src/broker.mjs` | `SharedDeliveryNode` + `Tenant` — the original broker prototype (the seam) | **real, tested** (superseded in prod by the submodule) |
 | `src/shard.mjs` | `shardFor()` ported verbatim from the apps' transport | **real** (matches prod) |
 | `src/mock-node.mjs` | In-memory `UnderlyingNode` for tests on any machine | **real** |
-| `demo/demo.mjs` | Runnable proof of the four claims below | **real, passing** |
-| `src/real-node.mjs` | Adapter mapping the broker onto the arm64 JNI bridge | **sketch** (phone) |
-| `aidl/*.aidl` | The Android IPC surface (service + callback) | **sketch** |
-| `client/logos-transport-client.mjs` | App-side shim: shared-if-present, else embedded | **sketch** |
+| `demo/demo.mjs` | Runnable proof of the four claims below | **real, 11/11 passing** |
+| `aidl/*.aidl` | The Android IPC surface (service + callback) — original sketch | **realized** in `app/native/deliveryservice/aidl` |
+| `client/logos-transport-client.mjs` | App-side shim: shared-if-present, else embedded — original sketch | **realized** as `ServiceNode` + `preferServiceBackend(true, appId)` in the transport pkg |
 
 `UnderlyingNode` contract (what `MockNode` implements and `RealNode` wraps):
 
