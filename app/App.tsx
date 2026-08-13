@@ -100,7 +100,7 @@ export default function App() {
                   trackColor={{ true: "#0b8f9c", false: "#3a2530" }}
                 />
                 <Text style={s.cacheLabel}>
-                  Cache while closed{g.cache !== false && g.buffered > 0 ? ` · ${g.buffered} waiting` : ""}
+                  {g.cache === false ? "Cache off" : `Cache while closed · ${g.buffered} waiting`}
                 </Text>
               </View>
             </View>
