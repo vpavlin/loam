@@ -18,6 +18,8 @@ export default function App() {
   const [status, setStatus] = useState("starting…");
   const [fg, setFg] = useState("foreground service: …");
   const [info, setInfo] = useState("");
+  const [mesh, setMesh] = useState("off");
+  const [meshForced, setMeshForced] = useState(false);
   const [mode, setMode] = useState<Mode>("Core");
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
   useEffect(() => {
@@ -46,6 +48,10 @@ export default function App() {
       const meshVal = edge && c.peers > 0 ? c.peers : c.mesh;
       setInfo(`peers ${c.peers}   mesh ${c.mesh}${edge ? " (edge)" : ""}   rx ${c.rxRaw}`);
       pushMetrics(c.peers, meshVal);   // expose to bound clients over AIDL
+      // BLE offline mesh state (ADR 0012) — armed? how many Bluetooth peers?
+      const t = transport as any;
+      const armed = t.meshEnabled?.() ?? false;
+      setMesh(armed ? `armed · ${t.meshPeers?.() ?? 0} BLE peer(s)${t.meshForcedOn?.() ? " · forced" : ""}` : "off");
     }, 3000);
     return () => clearInterval(t);
   }, []);
@@ -60,7 +66,19 @@ export default function App() {
       <View style={s.card}>
         <Text style={s.status}>{status}</Text>
         <Text style={s.info}>{info}</Text>
+        <Text style={[s.info, mesh !== "off" && { color: "#7ee787" }]}>BLE offline mesh: {mesh}</Text>
         <Text style={s.fg}>{fg}</Text>
+      </View>
+
+      <View style={s.row}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.label}>FORCE OFFLINE MESH (BLE)</Text>
+          <Text style={s.hint}>Auto-arms when the fleet drops. Force it on to test the Bluetooth mesh with the internet up.</Text>
+        </View>
+        <Switch
+          value={meshForced}
+          onValueChange={(v) => { setMeshForced(v); try { (transport as any).forceMesh?.(v); } catch { /* */ } }}
+        />
       </View>
 
       <Text style={s.label}>NODE MODE</Text>
