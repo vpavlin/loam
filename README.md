@@ -44,7 +44,7 @@ This is the desktop host role (one component owns delivery, app cores are its cl
 
 | Path | What it is | Status |
 |------|-----------|--------|
-| `app/` | **`co.logos.delivery` — the shared node service.** Expo/RN app: runs `SharedDeliveryNode`+`RealNode` from the transport package behind a Kotlin **foreground service + AIDL** (`app/native/deliveryservice`); other apps bind as broker `Tenant`s | **built — Service 0.0.10**, on-device iteration (KYM reference) |
+| `app/` | **`co.logos.delivery` — the shared node service.** Expo/RN app: runs `SharedDeliveryNode`+`RealNode` from the transport package behind a Kotlin **foreground service + AIDL** (`app/native/deliveryservice`); other apps bind as broker `Tenant`s | **Service 0.0.14 — on-device verified** (consent + multi-tenant + offline cache) |
 | `app/src/lib/logos-transport-pkg` | The shared TS transport (submodule → `vpavlin/logos-transport`): broker + `RealNode` + `ServiceNode` + JNI | **real, on-device proven** (qaku/kym ship it) |
 | `src/broker.mjs` | `SharedDeliveryNode` + `Tenant` — the original broker prototype (the seam) | **real, tested** (superseded in prod by the submodule) |
 | `src/shard.mjs` | `shardFor()` ported verbatim from the apps' transport | **real** (matches prod) |
@@ -62,6 +62,36 @@ metrics()
 ```
 
 Every one of these already exists in the FFI. The **only** thing native code lacks is receive-side demux — which is exactly what the broker adds.
+
+## Offline cache (per app, opt-in)
+
+Because the service keeps running while an app is closed, it can **hold that app's
+messages instead of dropping them** — so the app reopens fast without re-syncing
+everything. Each approved app has a **"Cache while closed"** toggle in the consent UI,
+with a live **"N waiting"** count.
+
+How it works (details in [`docs/adr/0003`](docs/adr/0003-offline-cache.md) /
+[logos-transport ADR 0011](https://github.com/vpavlin/logos-transport/blob/main/docs/adr/0011-per-tenant-offline-cache.md)):
+
+- When a caching app goes away the broker **`detach`es** its tenant — **keeps the
+  subscription** (so the one node keeps receiving on its topic) and **buffers** the
+  still-sealed messages into a bounded ring, instead of `close`ing (which would
+  unsubscribe). A **binder-death** hook auto-detaches an app that was *killed* (it can't
+  unregister itself).
+- On reopen the app **drains the buffer in order**, then reconciles only the remainder
+  — so "backgrounded but node alive" reopens do **no** reconciliation at all.
+- The cache holds **only opaque sealed bytes**; the service never sees plaintext. RBSR
+  catch-up remains the backstop for "phone was off" / ring overflow.
+
+**Verified on-device:** the "N waiting" count climbs while an app is killed and drains on
+reopen.
+
+## Design decisions
+
+See [`docs/adr/`](docs/adr/) — why it's a separate process (0001), how consent is keyed
+to the caller's real identity (0002), and the offline cache (0003). Transport-layer
+decisions live in the [`logos-transport`](https://github.com/vpavlin/logos-transport)
+ADRs.
 
 ## What the demo proves (`node demo/demo.mjs` — 11/11)
 
