@@ -4,6 +4,7 @@ import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import * as transport from "./src/lib/logos-transport";
 import { getDeviceId } from "./src/lib/device";
+import { LoamMeshRadio } from "./src/lib/logos-transport-pkg/native/blemesh/loam-mesh-radio";
 import { startKeepAlive } from "./src/lib/keepalive";
 import { initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, setCache, pushMetrics, Client } from "./src/lib/service-bridge";
 
@@ -28,6 +29,10 @@ export default function App() {
         try { await Notifications.requestPermissionsAsync(); } catch { /* */ }
         const deviceId = await getDeviceId();
         await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => false, onStatus: setStatus });
+        // Device-wide BLE offline mesh (ADR 0012). The shared node owns it: register the radio
+        // once and the transport auto-arms the mesh when the fleet path drops — so EVERY bound
+        // app (scala/qaku/kym) keeps syncing over Bluetooth with no mesh code of its own.
+        try { transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio() : null); } catch { /* */ }
         setFg("foreground service: " + (await startKeepAlive()));
         await initServiceBridge(() => setTick((n) => n + 1));
       } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
