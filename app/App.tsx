@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import * as transport from "./src/lib/logos-transport";
 import { getDeviceId } from "./src/lib/device";
 import { startKeepAlive } from "./src/lib/keepalive";
-import { initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, pushMetrics, Client } from "./src/lib/service-bridge";
+import { initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, setCache, pushMetrics, Client } from "./src/lib/service-bridge";
 
 // The device-wide shared delivery node. It runs ONE liblogosdelivery node in a foreground
 // service; other apps bind over AIDL and — once YOU approve them — sync through this one node.
@@ -88,12 +88,27 @@ export default function App() {
         ? <Text style={s.empty}>No apps approved yet. When an app asks, you'll see a request above.</Text>
         : granted.map((g: any) => (
           <View key={g.callerKey} style={s.grantRow}>
-            <View style={{ flex: 1 }}><Text style={s.appName}>{g.label}</Text><Text style={s.appMeta}>{g.pkg} · {shortCert(g.cert)}</Text></View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.appName}>{g.label}</Text>
+              <Text style={s.appMeta}>{g.pkg} · {shortCert(g.cert)}</Text>
+              {/* Offline cache: hold this app's messages while it's closed, so it
+                  doesn't have to re-sync everything on reopen. */}
+              <View style={s.cacheRow}>
+                <Switch
+                  value={g.cache !== false}
+                  onValueChange={(v) => setCache(g.callerKey, v)}
+                  trackColor={{ true: "#0b8f9c", false: "#3a2530" }}
+                />
+                <Text style={s.cacheLabel}>
+                  Cache while closed{g.cache !== false && g.buffered > 0 ? ` · ${g.buffered} waiting` : ""}
+                </Text>
+              </View>
+            </View>
             <TouchableOpacity style={[s.btn, s.deny]} onPress={() => revoke(g.callerKey)}><Text style={s.btnT}>Revoke</Text></TouchableOpacity>
           </View>
         ))}
 
-      <Text style={s.note}>Apps you approve sync through this one node. Traffic stays end-to-end encrypted per app — the service only moves sealed bytes.</Text>
+      <Text style={s.note}>Apps you approve sync through this one node. Traffic stays end-to-end encrypted per app — the service only moves sealed bytes. “Cache while closed” lets the node hold an app's messages while it isn't running, so it opens faster with less re-sync.</Text>
     </ScrollView>
   );
 }
@@ -116,6 +131,8 @@ const s = StyleSheet.create({
   reqCard: { backgroundColor: "#151b23", borderColor: "#0b8f9c", borderWidth: 1, borderRadius: 12, padding: 16, width: "100%", marginBottom: 10 },
   appName: { color: "#e6e9ef", fontSize: 16, fontWeight: "700" },
   appMeta: { color: "#8b94a3", fontSize: 11, fontFamily: "monospace", marginTop: 3 },
+  cacheRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
+  cacheLabel: { color: "#8a7580", fontSize: 12 },
   ask: { color: "#28c2d1", fontSize: 13, marginTop: 8 },
   btn: { flex: 1, borderRadius: 9, paddingVertical: 11, alignItems: "center" },
   allow: { backgroundColor: "#0b8f9c" }, deny: { borderColor: "#3a2530", borderWidth: 1, backgroundColor: "#1a1116", flex: 0, paddingHorizontal: 20 },

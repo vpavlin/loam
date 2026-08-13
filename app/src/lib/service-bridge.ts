@@ -15,8 +15,11 @@ export function serviceBridgeAvailable(): boolean { return !!Bridge; }
 export function pushMetrics(peers: number, mesh: number) { try { Bridge?.setMetrics(JSON.stringify({ peers, mesh })); } catch { /* */ } }
 
 const GRANTS = (FileSystem.documentDirectory || "") + "logos-delivery-grants.json";
+// Offline cache ring size per approved app (ADR 0011). Bounded; on overflow the
+// oldest are dropped and the app reconciles the gap. Per-app toggle = future UI.
+const CACHE_LIMIT = 1000;
 export type Client = { callerKey: string; appId: string; pkg: string; cert: string; label: string };
-type Grant = Client & { granted: boolean };
+type Grant = Client & { granted: boolean; cache?: boolean };
 
 const grants = new Map<string, Grant>();                       // callerKey -> grant (persisted)
 const pending = new Map<string, Client>();                     // awaiting user decision
@@ -40,10 +43,12 @@ async function loadGrants() {
 function activate(callerKey: string) {
   if (active.has(callerKey)) return;
   active.add(callerKey);
+  // Approved apps get offline caching (ADR 0011): while the app is unbound the
+  // node keeps its subscription and buffers (opaque) messages, drained on rebind.
   transport.registerClient(callerKey, (topic, cands) => {
     Bridge.deliver(callerKey, topic, JSON.stringify(cands.map((c: Uint8Array) => fromByteArray(c))));
     return true;   // service is a blind pipe; the client opens with its own key
-  });
+  }, { cacheLimit: grants.get(callerKey)?.cache === false ? 0 : CACHE_LIMIT });
 }
 
 export async function initServiceBridge(change: () => void): Promise<boolean> {
@@ -84,19 +89,29 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
 // ---- consent actions (called from the UI) ----
 export async function approve(callerKey: string) {
   const c = pending.get(callerKey); if (!c) return;
-  grants.set(callerKey, { ...c, granted: true }); await persist(); pushAuthorized();
+  grants.set(callerKey, { ...c, granted: true, cache: true }); await persist(); pushAuthorized();
   pending.delete(callerKey);
   activate(callerKey);
   for (const t of queued.get(callerKey) || []) { try { await transport.clientSubscribe(callerKey, t); } catch { /* */ } }
   queued.delete(callerKey);
   onChange && onChange();
 }
+export async function setCache(callerKey: string, on: boolean) {
+  const g = grants.get(callerKey); if (!g) return;
+  g.cache = on; grants.set(callerKey, g); await persist();
+  try { transport.setClientCache(callerKey, on ? CACHE_LIMIT : 0); } catch { /* */ }
+  onChange && onChange();
+}
 export async function deny(callerKey: string) { pending.delete(callerKey); queued.delete(callerKey); onChange && onChange(); }
 export async function revoke(callerKey: string) {
   grants.delete(callerKey); await persist(); pushAuthorized();
-  active.delete(callerKey); try { await transport.unregisterClient(callerKey); } catch { /* */ }
+  active.delete(callerKey); try { await transport.unregisterClient(callerKey, { hard: true }); } catch { /* */ }
   onChange && onChange();
 }
-export function lists(): { pending: Client[]; granted: Grant[] } {
-  return { pending: [...pending.values()], granted: [...grants.values()].filter((g) => g.granted) };
+export function lists(): { pending: Client[]; granted: (Grant & { buffered: number })[] } {
+  const granted = [...grants.values()].filter((g) => g.granted).map((g) => {
+    let buffered = 0; try { buffered = transport.clientCacheInfo(g.callerKey).buffered; } catch { /* */ }
+    return { ...g, buffered };
+  });
+  return { pending: [...pending.values()], granted };
 }
