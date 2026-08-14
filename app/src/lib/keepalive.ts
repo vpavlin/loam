@@ -3,7 +3,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const task = async () => { while (BackgroundService.isRunning()) { await sleep(60000); } };
 export async function startKeepAlive(): Promise<string> {
   const options: any = {
-    taskName: "logosDelivery", taskTitle: "Logos Delivery", taskDesc: "Shared node running",
+    taskName: "logosDelivery", taskTitle: "Loam", taskDesc: "Shared node running",
     taskIcon: { name: "notification_icon", type: "drawable" }, color: "#0b8f9c",
     linkingURI: "logosdelivery://", foregroundServiceType: ["dataSync"],
   };

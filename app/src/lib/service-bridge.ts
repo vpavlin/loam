@@ -64,7 +64,7 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
         if (grants.get(ck)?.granted) { activate(ck); return; }           // already approved
         if (!pending.has(ck)) {
           pending.set(ck, client);
-          try { await Notifications.scheduleNotificationAsync({ content: { title: "Allow an app to use Logos Delivery?", body: `${client.label} wants to use the shared node — tap to review.` }, trigger: null }); } catch { /* */ }
+          try { await Notifications.scheduleNotificationAsync({ content: { title: "Allow an app to use Loam?", body: `${client.label} wants to use the shared node — tap to review.` }, trigger: null }); } catch { /* */ }
           onChange && onChange();
         }
       } else if (r.kind === "subscribe") {
@@ -75,7 +75,7 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
       } else if (r.kind === "touch") {
         if (!grants.get(ck)?.granted && !pending.has(ck)) {
           pending.set(ck, { callerKey: ck, appId: r.appId || "", pkg: r.pkg, cert: r.cert, label: r.label });
-          try { await Notifications.scheduleNotificationAsync({ content: { title: "Allow an app to use Logos Delivery?", body: `${r.label} wants to use the shared node — tap to review.` }, trigger: null }); } catch { /* */ }
+          try { await Notifications.scheduleNotificationAsync({ content: { title: "Allow an app to use Loam?", body: `${r.label} wants to use the shared node — tap to review.` }, trigger: null }); } catch { /* */ }
           onChange && onChange();
         }
       } else if (r.kind === "unregister") {

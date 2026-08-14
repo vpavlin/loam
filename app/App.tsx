@@ -63,7 +63,7 @@ export default function App() {
 
   return (
     <ScrollView style={s.scroll} contentContainerStyle={s.c}>
-      <Text style={s.title}>Logos Delivery</Text>
+      <Text style={s.title}>Loam</Text>
       <Text style={s.sub}>shared node · one per phone</Text>
       <View style={s.card}>
         <Text style={s.status}>{status}</Text>
