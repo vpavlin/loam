@@ -328,7 +328,7 @@
         <div class="l-depth"><span class="l-mono">Topsoil</span><span class="num mono">01 · node</span></div>
         <div>
           <div class="l-name wm">loam <span class="k mono">xyz.vpavlin.loam</span></div>
-          <p class="l-desc">The device-wide shared delivery node. One Waku node per phone, shared by every Loam app behind a consent gate — so ten apps don’t each run ten radios. Also hosts the Bluetooth mesh for the whole device.</p>
+          <p class="l-desc">The device-wide shared delivery node. One shared Logos node per phone, shared by every Loam app behind a consent gate — so ten apps don’t each run ten radios. Also hosts the Bluetooth mesh for the whole device.</p>
         </div>
       </a>
       <a class="layer l2" role="listitem" href="https://github.com/vpavlin/loam-sync">
@@ -342,7 +342,7 @@
         <div class="l-depth"><span class="l-mono">Bedrock</span><span class="num mono">03 · reach</span></div>
         <div>
           <div class="l-name wm">loam-transport</div>
-          <p class="l-desc">The reach. A shared node over the Waku network, plus a Bluetooth-LE mesh bearer that carries the same sealed writes phone-to-phone when there’s no internet at all. One frame, whichever pipe is there; the sync layer dedups the rest.</p>
+          <p class="l-desc">The reach. A shared node over the Logos network, plus a Bluetooth-LE mesh bearer that carries the same sealed writes phone-to-phone when there’s no internet at all. One frame, whichever pipe is there; the sync layer dedups the rest.</p>
         </div>
       </a>
     </div>
@@ -372,7 +372,7 @@
       <div class="pr">
         <div class="n mono">04</div>
         <h3>Yours, sealed</h3>
-        <p>Data lives on your devices as sealed bytes. The transport — Waku or Bluetooth — only ever moves ciphertext; it never needs to understand what it carries.</p>
+        <p>Data lives on your devices as sealed bytes. The transport — Logos or Bluetooth — only ever moves ciphertext; it never needs to understand what it carries.</p>
       </div>
     </div>
   </div>
@@ -390,7 +390,7 @@
       </a>
       <a class="repo" href="https://github.com/vpavlin/loam-transport">
         <span class="rn mono"><span class="slash">vpavlin/</span>loam-transport</span>
-        <span class="rd">Shared Waku node + Bluetooth mesh bearer.</span>
+        <span class="rd">Shared Logos node + Bluetooth mesh bearer.</span>
       </a>
       <a class="repo" href="https://github.com/vpavlin/loam-sync">
         <span class="rn mono"><span class="slash">vpavlin/</span>loam-sync</span>
