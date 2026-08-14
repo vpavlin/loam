@@ -19,6 +19,7 @@ export default function App() {
   const [fg, setFg] = useState("foreground service: …");
   const [info, setInfo] = useState("");
   const [mesh, setMesh] = useState("off");
+  const [bleNative, setBleNative] = useState("");
   const [meshForced, setMeshForced] = useState(false);
   const [mode, setMode] = useState<Mode>("Core");
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
@@ -34,7 +35,7 @@ export default function App() {
         // Device-wide BLE offline mesh (ADR 0012). The shared node owns it: register the radio
         // once and the transport auto-arms the mesh when the fleet path drops — so EVERY bound
         // app (scala/qaku/kym) keeps syncing over Bluetooth with no mesh code of its own.
-        try { transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio() : null); } catch { /* */ }
+        try { transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio(deviceId) : null); } catch { /* */ }
         setFg("foreground service: " + (await startKeepAlive()));
         await initServiceBridge(() => setTick((n) => n + 1));
       } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
@@ -46,12 +47,13 @@ export default function App() {
       // as "mesh" so clients read Edge as connected, not "forming". Core keeps real mesh.
       const edge = transport.getNodeMode() === "Edge";
       const meshVal = edge && c.peers > 0 ? c.peers : c.mesh;
-      setInfo(`peers ${c.peers}   mesh ${c.mesh}${edge ? " (edge)" : ""}   rx ${c.rxRaw}`);
+      setInfo(`peers ${c.peers}   mesh ${c.mesh}${edge ? " (edge)" : ""}   rx ${c.rxRaw}   bleTx ${c.bleTx} bleRx ${c.bleRx}`);
       pushMetrics(c.peers, meshVal);   // expose to bound clients over AIDL
       // BLE offline mesh state (ADR 0012) — armed? how many Bluetooth peers?
       const t = transport as any;
       const armed = t.meshEnabled?.() ?? false;
       setMesh(armed ? `armed · ${t.meshPeers?.() ?? 0} BLE peer(s)${t.meshForcedOn?.() ? " · forced" : ""}` : "off");
+      try { setBleNative(await LoamMeshRadio.stats()); } catch { /* */ }
     }, 3000);
     return () => clearInterval(t);
   }, []);
@@ -67,6 +69,7 @@ export default function App() {
         <Text style={s.status}>{status}</Text>
         <Text style={s.info}>{info}</Text>
         <Text style={[s.info, mesh !== "off" && { color: "#7ee787" }]}>BLE offline mesh: {mesh}</Text>
+        {bleNative !== "" && <Text style={s.info}>BLE data: {bleNative}</Text>}
         <Text style={s.fg}>{fg}</Text>
       </View>
 

@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Logos Delivery",
-    "slug": "logos-delivery",
-    "version": "0.0.16",
+    "name": "Loam",
+    "slug": "loam",
+    "version": "0.0.22",
     "platforms": [
       "android"
     ],
@@ -11,8 +11,8 @@
       "onDemandFilesystem": false
     },
     "android": {
-      "package": "co.logos.delivery",
-      "versionCode": 16,
+      "package": "xyz.vpavlin.loam",
+      "versionCode": 22,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/adaptive-bg.png",
@@ -44,6 +44,6 @@
       "translucent": false
     },
     "backgroundColor": "#141415",
-    "scheme": "logosdelivery"
+    "scheme": "loam"
   }
 }
