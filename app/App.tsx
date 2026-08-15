@@ -8,8 +8,10 @@ import { LoamMeshRadio } from "./src/lib/logos-transport-pkg/native/blemesh/loam
 import { startKeepAlive } from "./src/lib/keepalive";
 import { preloadGrants, initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, setCache, pushMetrics, Client } from "./src/lib/service-bridge";
 
-// The device-wide shared delivery node. It runs ONE liblogosdelivery node in a foreground
-// service; other apps bind over AIDL and — once YOU approve them — sync through this one node.
+// The device-wide shared delivery node runs ONE Loam node in a foreground service; other apps
+// bind over AIDL and — once YOU approve them — sync through it. This screen presents the node as
+// what it is: a TRANSPORT with several bearers. Each bearer is a card (live stats + its control +
+// when/why you'd use it). Matches the desktop loam_ui panel.
 const PROBE_TOPIC = "/logos-delivery/1/probe/proto";
 type Mode = "Core" | "Edge";
 const shortCert = (c: string) => (c ? c.slice(0, 10) + "…" : "?");
@@ -17,17 +19,17 @@ const shortCert = (c: string) => (c ? c.slice(0, 10) + "…" : "?");
 export default function App() {
   const [status, setStatus] = useState("starting…");
   const [fg, setFg] = useState("foreground service: …");
-  const [info, setInfo] = useState("");
-  const [mesh, setMesh] = useState("off");
-  const [bleNative, setBleNative] = useState("");
   const [meshForced, setMeshForced] = useState(false);
   const [mode, setMode] = useState<Mode>("Core");
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
+  // per-bearer live state
+  const [net, setNet] = useState({ peers: -1, mesh: -1, rx: 0 });
+  const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false });
+
   useEffect(() => {
     (async () => {
       try {
-        // Paint the approved-apps list from disk FIRST — it's persisted and needs no node,
-        // so it shouldn't wait behind transport.start() connecting.
+        // Paint the approved-apps list from disk FIRST — it's persisted and needs no node.
         try { await preloadGrants(() => setTick((n) => n + 1)); } catch { /* */ }
         let m: Mode = "Edge";
         try { m = ((await SecureStore.getItemAsync("logos-delivery-nodemode")) as Mode) || "Edge"; } catch { /* */ }
@@ -35,67 +37,122 @@ export default function App() {
         try { await Notifications.requestPermissionsAsync(); } catch { /* */ }
         const deviceId = await getDeviceId();
         await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => false, onStatus: setStatus });
-        // Device-wide BLE offline mesh (ADR 0012). The shared node owns it: register the radio
-        // once and the transport auto-arms the mesh when the fleet path drops — so EVERY bound
-        // app (scala/qaku/kym) keeps syncing over Bluetooth with no mesh code of its own.
+        // Device-wide BLE offline mesh (ADR 0012): register the radio once; the transport auto-arms
+        // the mesh when the fleet path drops — so EVERY bound app keeps syncing over Bluetooth.
         try { transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio(deviceId) : null); } catch { /* */ }
         setFg("foreground service: " + (await startKeepAlive()));
         await initServiceBridge(() => setTick((n) => n + 1));
       } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
     })();
-    const t = setInterval(async () => {
+    const iv = setInterval(async () => {
       try { await transport.refreshPeerInfo(); } catch { /* */ }
       const c = transport.counters;
-      // Edge has no relay mesh by design (filter/lightpush) — report deliverable peers
-      // as "mesh" so clients read Edge as connected, not "forming". Core keeps real mesh.
       const edge = transport.getNodeMode() === "Edge";
+      // Edge has no relay mesh by design (filter/lightpush) — report deliverable peers as "mesh".
       const meshVal = edge && c.peers > 0 ? c.peers : c.mesh;
-      setInfo(`peers ${c.peers}   mesh ${c.mesh}${edge ? " (edge)" : ""}   rx ${c.rxRaw}   bleTx ${c.bleTx} bleRx ${c.bleRx}`);
+      setNet({ peers: c.peers, mesh: meshVal, rx: c.rxRaw });
       pushMetrics(c.peers, meshVal);   // expose to bound clients over AIDL
-      // BLE offline mesh state (ADR 0012) — armed? how many Bluetooth peers?
       const t = transport as any;
-      const armed = t.meshEnabled?.() ?? false;
-      setMesh(armed ? `armed · ${t.meshPeers?.() ?? 0} BLE peer(s)${t.meshForcedOn?.() ? " · forced" : ""}` : "off");
-      try { setBleNative(await LoamMeshRadio.stats()); } catch { /* */ }
+      setBle({
+        armed: t.meshEnabled?.() ?? false,
+        peers: t.meshPeers?.() ?? 0,
+        tx: c.bleTx, rx: c.bleRx,
+        forced: t.meshForcedOn?.() ?? false,
+      });
     }, 3000);
-    return () => clearInterval(t);
+    return () => clearInterval(iv);
   }, []);
 
   const pick = async (m: Mode) => { try { await SecureStore.setItemAsync("logos-delivery-nodemode", m); } catch { /* */ } setMode(m); };
   const { pending, granted } = serviceBridgeAvailable() ? lists() : { pending: [] as Client[], granted: [] as any[] };
+  const netUp = net.peers > 0;
+  const bleColor = ble.armed ? (ble.peers > 0 ? C.green : C.amber) : C.inkFaint;
 
   return (
     <ScrollView style={s.scroll} contentContainerStyle={s.c}>
       <Text style={s.title}>Loam</Text>
       <Text style={s.sub}>the soil your apps grow in</Text>
-      <View style={s.card}>
+
+      {/* overall */}
+      <View style={s.statusRow}>
+        <View style={[s.dot, { backgroundColor: netUp ? C.green : C.amber }]} />
         <Text style={s.status}>{status}</Text>
-        <Text style={s.info}>{info}</Text>
-        <Text style={[s.info, mesh !== "off" && { color: "#9CE873" }]}>BLE offline mesh: {mesh}</Text>
-        {bleNative !== "" && <Text style={s.info}>BLE data: {bleNative}</Text>}
-        <Text style={s.fg}>{fg}</Text>
       </View>
 
-      <View style={s.row}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.label}>FORCE OFFLINE MESH (BLE)</Text>
-          <Text style={s.hint}>Auto-arms when the fleet drops. Force it on to test the Bluetooth mesh with the internet up.</Text>
+      <Text style={s.label}>BEARERS</Text>
+
+      {/* ── Logos network (the internet path) ───────────────────────────── */}
+      <View style={s.bearer}>
+        <View style={s.bHead}>
+          <View style={[s.dot, { backgroundColor: netUp ? C.green : C.amber }]} />
+          <Text style={s.bName}>Logos network</Text>
+          <View style={{ flex: 1 }} />
+          <Text style={s.bState}>{netUp ? "connected" : "connecting…"}</Text>
         </View>
-        <Switch
-          value={meshForced}
-          onValueChange={(v) => { setMeshForced(v); try { (transport as any).forceMesh?.(v); } catch { /* */ } }}
-        />
+        <Text style={s.bStats}>
+          {net.peers < 0 ? "—" : `${net.peers} peer${net.peers === 1 ? "" : "s"}`}
+          {`   ${net.mesh >= 0 ? net.mesh : 0} in mesh   rx ${net.rx}`}
+        </Text>
+        <View style={s.modeRow}>
+          {(["Edge", "Core"] as Mode[]).map((m) => (
+            <TouchableOpacity key={m} style={[s.chip, mode === m && s.chipOn]} onPress={() => pick(m)}>
+              <Text style={[s.chipT, mode === m && s.chipTOn]}>{m}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={s.why}>
+          The internet path — reaches anyone on the Logos network, anywhere there's a connection.
+          It's how apps sync by default.{"\n"}
+          <Text style={s.whyB}>{mode === "Edge" ? "Edge" : "Core"}</Text>
+          {mode === "Edge"
+            ? " (selected): light on battery & data — right for a phone on mobile or WiFi."
+            : " (selected): relays the shard for the whole network — best on stable WiFi + power."}
+          {"  Relaunch to apply a change."}
+        </Text>
       </View>
 
-      <Text style={s.label}>NODE MODE</Text>
-      <View style={s.row}>
-        {(["Edge", "Core"] as Mode[]).map((m) => (
-          <TouchableOpacity key={m} style={[s.chip, mode === m && s.chipOn]} onPress={() => pick(m)}>
-            <Text style={[s.chipT, mode === m && s.chipTOn]}>{m}</Text>
-          </TouchableOpacity>
-        ))}
+      {/* ── Bluetooth mesh (offline path) ───────────────────────────────── */}
+      <View style={s.bearer}>
+        <View style={s.bHead}>
+          <View style={[s.dot, { backgroundColor: bleColor }]} />
+          <Text style={s.bName}>Bluetooth mesh</Text>
+          <View style={{ flex: 1 }} />
+          <Text style={s.bState}>{ble.forced ? "forced on" : ble.armed ? "armed" : "idle"}</Text>
+        </View>
+        <Text style={s.bStats}>
+          {ble.armed ? `${ble.peers} nearby   tx ${ble.tx}   rx ${ble.rx}` : "not active — arms automatically when needed"}
+        </Text>
+        <View style={s.ctrlRow}>
+          <Text style={s.ctrlLabel}>Force on</Text>
+          <Switch
+            value={meshForced}
+            trackColor={{ true: "#4E8A3C", false: "#3A2E20" }}
+            onValueChange={(v) => { setMeshForced(v); try { (transport as any).forceMesh?.(v); } catch { /* */ } }}
+          />
+        </View>
+        <Text style={s.why}>
+          No internet needed — nearby phones sync directly, phone-to-phone, over Bluetooth. It
+          auto-arms when the Logos path drops (a dead zone, a basement, a conference WiFi that's
+          drowning) and heals back to the network the moment it returns. Force it on to test the
+          mesh with the internet still up.
+        </Text>
       </View>
-      <Text style={s.hint}>{mode === "Edge" ? "Edge (default) — light on battery & data; works on mobile and WiFi. Relaunch to apply." : "Core — relays the shard for the network; best on stable WiFi/power. Relaunch to apply."}</Text>
+
+      {/* ── LoRa (planned) ──────────────────────────────────────────────── */}
+      <View style={[s.bearer, s.bearerPlanned]}>
+        <View style={s.bHead}>
+          <View style={[s.dot, { backgroundColor: C.inkFaint }]} />
+          <Text style={[s.bName, { color: C.inkSoft }]}>LoRa</Text>
+          <View style={{ flex: 1 }} />
+          <Text style={s.bState}>planned</Text>
+        </View>
+        <Text style={s.why}>
+          Long-range, low-power radio — kilometres, off-grid, no phones-in-a-room required. A future
+          bearer: apps won't change, it just becomes another pipe Loam fans writes across.
+        </Text>
+      </View>
+
+      <Text style={s.fg}>{fg}</Text>
 
       {pending.length > 0 && <>
         <Text style={s.label}>REQUESTS</Text>
@@ -114,14 +171,12 @@ export default function App() {
 
       <Text style={s.label}>APPROVED APPS {granted.length ? `(${granted.length})` : ""}</Text>
       {granted.length === 0
-        ? <Text style={s.empty}>No apps approved yet. When an app asks, you'll see a request above.</Text>
+        ? <Text style={s.empty}>No apps approved yet. When an app asks to use this node, you'll see a request above.</Text>
         : granted.map((g: any) => (
           <View key={g.callerKey} style={s.grantRow}>
             <View style={{ flex: 1 }}>
               <Text style={s.appName}>{g.label}</Text>
               <Text style={s.appMeta}>{g.pkg} · {shortCert(g.cert)}</Text>
-              {/* Offline cache: hold this app's messages while it's closed, so it
-                  doesn't have to re-sync everything on reopen. */}
               <View style={s.cacheRow}>
                 <Switch
                   value={g.cache !== false}
@@ -137,43 +192,54 @@ export default function App() {
           </View>
         ))}
 
-      <Text style={s.note}>One shared Logos node per phone, behind a consent gate — so ten apps don't each run ten radios. Data lives on your devices as sealed bytes; the transport only ever moves ciphertext, never needing to understand what it carries. “Cache while closed” lets the node hold an app's messages while it isn't running, so it opens faster with less re-sync.</Text>
+      <Text style={s.note}>One shared Loam node per phone, behind a consent gate — so ten apps don't each run ten radios. Every sealed write is fanned across all bearers and deduped, so a message over the network and the same over Bluetooth fold to one. Data lives on your device as sealed bytes; Loam only ever moves ciphertext. “Cache while closed” lets the node hold an app's messages while it isn't running, so it opens faster with less re-sync.</Text>
     </ScrollView>
   );
 }
+
 // Loam design language — the warm "soil & sprout" palette from vpavlin.github.io/loam.
-// ground/surface = soil, ink = cream, accent = sprout-green, clay = terracotta secondary.
 const C = {
   ground: "#14100C", surface: "#1E1813", tileMid: "#2C2318", tileTop: "#3A2E20",
   ink: "#ECE5D6", inkSoft: "#A08E76", inkFaint: "#7C6D58",
-  green: "#5CB636", sprout: "#8ECB6F", greenBright: "#9CE873", clay: "#D2894E",
+  green: "#5CB636", sprout: "#8ECB6F", greenBright: "#9CE873", clay: "#D2894E", amber: "#D2894E",
 };
 const s = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: C.ground },
-  c: { alignItems: "center", padding: 24, paddingTop: 64, paddingBottom: 48 },
-  title: { color: C.ink, fontSize: 30, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: C.sprout, fontSize: 13, marginBottom: 22, fontFamily: "monospace", letterSpacing: 1 },
-  card: { backgroundColor: C.surface, borderColor: C.tileMid, borderWidth: 1, borderRadius: 14, paddingVertical: 18, paddingHorizontal: 26, alignItems: "center", minWidth: 280 },
-  status: { color: C.ink, fontSize: 17, marginBottom: 6 },
-  info: { color: C.inkSoft, fontSize: 13, fontFamily: "monospace" },
-  fg: { color: C.sprout, fontSize: 12, fontFamily: "monospace", marginTop: 6 },
-  label: { color: C.inkFaint, fontSize: 11, fontFamily: "monospace", letterSpacing: 1.5, marginTop: 26, marginBottom: 8, alignSelf: "flex-start" },
-  row: { flexDirection: "row", gap: 10, alignSelf: "flex-start" },
-  row2: { flexDirection: "row", gap: 10, marginTop: 12 },
-  chip: { borderColor: C.tileMid, borderWidth: 1, borderRadius: 9, paddingVertical: 8, paddingHorizontal: 26 },
+  c: { alignItems: "stretch", padding: 20, paddingTop: 60, paddingBottom: 48 },
+  title: { color: C.ink, fontSize: 30, fontWeight: "800", letterSpacing: -0.5, textAlign: "center" },
+  sub: { color: C.sprout, fontSize: 13, marginBottom: 20, fontFamily: "monospace", letterSpacing: 1, textAlign: "center" },
+  statusRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  status: { color: C.inkSoft, fontSize: 14 },
+  dot: { width: 9, height: 9, borderRadius: 5 },
+  label: { color: C.inkFaint, fontSize: 11, fontFamily: "monospace", letterSpacing: 1.5, marginTop: 26, marginBottom: 10 },
+  // bearer card
+  bearer: { backgroundColor: C.surface, borderColor: C.tileMid, borderWidth: 1, borderRadius: 14, padding: 16, marginBottom: 12 },
+  bearerPlanned: { opacity: 0.6, borderStyle: "dashed" },
+  bHead: { flexDirection: "row", alignItems: "center", gap: 8 },
+  bName: { color: C.ink, fontSize: 16, fontWeight: "700" },
+  bState: { color: C.inkFaint, fontSize: 11, fontFamily: "monospace" },
+  bStats: { color: C.inkSoft, fontSize: 13, fontFamily: "monospace", marginTop: 8 },
+  modeRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+  chip: { borderColor: C.tileTop, borderWidth: 1, borderRadius: 9, paddingVertical: 7, paddingHorizontal: 24 },
   chipOn: { backgroundColor: C.green, borderColor: C.green },
-  chipT: { color: C.inkSoft, fontSize: 15, fontWeight: "700" }, chipTOn: { color: C.ground },
-  hint: { color: C.inkFaint, fontSize: 11, marginTop: 8, alignSelf: "flex-start" },
-  reqCard: { backgroundColor: C.surface, borderColor: C.green, borderWidth: 1, borderRadius: 12, padding: 16, width: "100%", marginBottom: 10 },
+  chipT: { color: C.inkSoft, fontSize: 14, fontWeight: "700" }, chipTOn: { color: C.ground },
+  ctrlRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 },
+  ctrlLabel: { color: C.inkSoft, fontSize: 14, fontWeight: "600" },
+  why: { color: C.inkFaint, fontSize: 12, lineHeight: 18, marginTop: 12 },
+  whyB: { color: C.sprout, fontWeight: "700" },
+  fg: { color: C.inkFaint, fontSize: 11, fontFamily: "monospace", marginTop: 8, textAlign: "center" },
+  // requests / approved apps
+  reqCard: { backgroundColor: C.surface, borderColor: C.green, borderWidth: 1, borderRadius: 12, padding: 16, marginBottom: 10 },
   appName: { color: C.ink, fontSize: 16, fontWeight: "700" },
   appMeta: { color: C.inkSoft, fontSize: 11, fontFamily: "monospace", marginTop: 3 },
+  ask: { color: C.sprout, fontSize: 13, marginTop: 8 },
+  row2: { flexDirection: "row", gap: 10, marginTop: 12 },
   cacheRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
   cacheLabel: { color: C.inkSoft, fontSize: 12 },
-  ask: { color: C.sprout, fontSize: 13, marginTop: 8 },
   btn: { flex: 1, borderRadius: 9, paddingVertical: 11, alignItems: "center" },
   allow: { backgroundColor: C.green }, deny: { borderColor: C.tileTop, borderWidth: 1, backgroundColor: C.tileMid, flex: 0, paddingHorizontal: 20 },
   btnT: { color: C.inkSoft, fontSize: 14, fontWeight: "700" },
-  grantRow: { flexDirection: "row", alignItems: "center", backgroundColor: C.surface, borderColor: C.tileMid, borderWidth: 1, borderRadius: 12, padding: 14, width: "100%", marginBottom: 8, gap: 10 },
-  empty: { color: C.inkFaint, fontSize: 13, alignSelf: "flex-start", lineHeight: 18 },
-  note: { color: C.inkFaint, fontSize: 11, marginTop: 32, textAlign: "center", lineHeight: 17 },
+  grantRow: { flexDirection: "row", alignItems: "center", backgroundColor: C.surface, borderColor: C.tileMid, borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 8, gap: 10 },
+  empty: { color: C.inkFaint, fontSize: 13, lineHeight: 18 },
+  note: { color: C.inkFaint, fontSize: 11, marginTop: 28, textAlign: "center", lineHeight: 17 },
 });
