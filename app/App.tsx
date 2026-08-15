@@ -6,7 +6,7 @@ import * as transport from "./src/lib/logos-transport";
 import { getDeviceId } from "./src/lib/device";
 import { LoamMeshRadio } from "./src/lib/logos-transport-pkg/native/blemesh/loam-mesh-radio";
 import { startKeepAlive } from "./src/lib/keepalive";
-import { initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, setCache, pushMetrics, Client } from "./src/lib/service-bridge";
+import { preloadGrants, initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, setCache, pushMetrics, Client } from "./src/lib/service-bridge";
 
 // The device-wide shared delivery node. It runs ONE liblogosdelivery node in a foreground
 // service; other apps bind over AIDL and — once YOU approve them — sync through this one node.
@@ -26,6 +26,9 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
+        // Paint the approved-apps list from disk FIRST — it's persisted and needs no node,
+        // so it shouldn't wait behind transport.start() connecting.
+        try { await preloadGrants(() => setTick((n) => n + 1)); } catch { /* */ }
         let m: Mode = "Edge";
         try { m = ((await SecureStore.getItemAsync("logos-delivery-nodemode")) as Mode) || "Edge"; } catch { /* */ }
         setMode(m); transport.setNodeMode(m);
@@ -64,7 +67,7 @@ export default function App() {
   return (
     <ScrollView style={s.scroll} contentContainerStyle={s.c}>
       <Text style={s.title}>Loam</Text>
-      <Text style={s.sub}>shared node · one per phone</Text>
+      <Text style={s.sub}>the soil your apps grow in</Text>
       <View style={s.card}>
         <Text style={s.status}>{status}</Text>
         <Text style={s.info}>{info}</Text>
@@ -134,7 +137,7 @@ export default function App() {
           </View>
         ))}
 
-      <Text style={s.note}>Apps you approve sync through this one node. Traffic stays end-to-end encrypted per app — the service only moves sealed bytes. “Cache while closed” lets the node hold an app's messages while it isn't running, so it opens faster with less re-sync.</Text>
+      <Text style={s.note}>One shared Logos node per phone, behind a consent gate — so ten apps don't each run ten radios. Data lives on your devices as sealed bytes; the transport only ever moves ciphertext, never needing to understand what it carries. “Cache while closed” lets the node hold an app's messages while it isn't running, so it opens faster with less re-sync.</Text>
     </ScrollView>
   );
 }

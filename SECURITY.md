@@ -1,6 +1,6 @@
-# Security model — logos-shared-delivery
+# Security model — Loam
 
-How the device-wide shared Waku node (`co.logos.delivery`) keeps one app from
+How the device-wide shared Logos node (`co.logos.delivery`) keeps one app from
 reading, forging, or interfering with another app's data — and the residual risks
 worth an explicit decision.
 
@@ -11,7 +11,7 @@ app layer, above the node.** Every app seals its payload (AEAD) inside its own
 process before handing bytes to the service, so the service, the broker, and any
 co-resident app only ever see **ciphertext + a content topic** — keys and plaintext
 never cross the IPC boundary. Pooling one node therefore gives the **same
-content-confidentiality guarantee as N separate nodes** (Waku is a public network —
+content-confidentiality guarantee as N separate nodes** (Logos is a public network —
 content security was never the transport's job), plus an admission gate (per-caller
 consent) and routing isolation (the broker demuxes by content topic).
 
@@ -32,7 +32,7 @@ metadata** (never plaintext). Closing that is the main open decision (§5).
   │  broker: contentTopic → {tenants}   │  routing demux ─ foreign topics dropped
   │  one liblogosdelivery node          │  sees only ciphertext + topics
   └───────────────┬─────────────────────┘
-                  │  public Waku wire (ciphertext + metadata, visible to anyone)
+                  │  public Logos wire (ciphertext + metadata, visible to anyone)
           ┌───────▼────────┐
           │  Logos fleet    │
           └─────────────────┘
@@ -89,7 +89,7 @@ parameter to the AIDL.*
 | T2 | Random malicious app binds & reads | Any app calls `bind()` | §3.2 consent + `(pkg,cert)` identity — needs owner approval | User approves a bad app (consent-UX) |
 | T3 | Consented app **passively** gets B's traffic | Shared receive stream | §3.3 broker demux — foreign topics dropped | None passively |
 | T4 | Consented app **actively** subscribes to B's topics | `subscribe(appId, B_topic)` | *Nothing today* — `_subscribe` has no namespace ACL | **Ciphertext + metadata of B** (not plaintext) — §5.1 |
-| T5 | Network/fleet observer | Public Waku wire | Inherent; content is AEAD | Topic, size, timing, sender-id metadata — §5.2 |
+| T5 | Network/fleet observer | Public Logos wire | Inherent; content is AEAD | Topic, size, timing, sender-id metadata — §5.2 |
 | T6 | Spoof/inject into B's channel | Publish on B's topic | AEAD integrity — forgery fails B's open | Garbage/DoS spam — §5.4 |
 | T7 | Impersonate another app | Assert a foreign `appId` | Tenant/grant keyed by binder `(pkg,cert)`, not the self-asserted `appId` | `appId` is a routing label only; keep security decisions on `(pkg,cert)` |
 
@@ -114,7 +114,7 @@ Two fixes (do at least one; they compose):
   today (e.g. scala's `/scala/1/<calId>/json`); those should migrate.
 
 ### 5.2 Metadata / traffic analysis
-Even without decrypting, a co-tenant or any Waku observer sees topic, message size,
+Even without decrypting, a co-tenant or any Logos observer sees topic, message size,
 timing, and sender-id. Mitigations: secret-derived + epoch-rotating topics (5.1b),
 size padding, and per-epoch sender-id rotation. Partial by nature — document the
 residual rather than claim resistance.
@@ -134,9 +134,22 @@ Approval is the human trust anchor, so the prompt must show the real
 `(package, label, cert)` and support **revocation**; grants are per `(pkg,cert)` so a
 re-signed build re-prompts. Avoid dialog fatigue (batch, remember, clear copy).
 
+### 5.6 BLE mesh bearer surface
+The transport can carry the **same sealed bytes** over a **BLE offline mesh** as a
+second bearer beside the Logos wire (loam-transport ADR 0012; desktop relay ADR 0013).
+Confidentiality is unchanged — the mesh still moves only AEAD-sealed bytes, so the blind-
+pipe guarantee (§2) holds on BLE too. What it *adds* is an **open, un-admitted relay
+surface**: any device in radio range can inject frames and every relay re-broadcasts
+hop-limited, so it widens the metadata/traffic-analysis surface (§5.2) and the DoS/spam
+surface (§5.4) — there's no per-caller consent gate on the air the way there is on the
+IPC boundary. Mitigations are bearer-local: hop limits + a seen-set bound flooding,
+identity-first connections (ADR 0014) reduce ghost peers, and the AEAD still makes
+injected frames unopenable. Treat the BLE bearer as reaching a strictly wider,
+lower-trust audience than the fleet wire.
+
 ## 6. Non-goals
 
-- **Traffic-analysis resistance** beyond topic unlinkability — Waku is a public
+- **Traffic-analysis resistance** beyond topic unlinkability — Logos is a public
   broadcast network by design.
 - **Protecting an app from its own device owner** — the owner runs the service and
   grants consent; this is a multi-*app* isolation model, not anti-forensics.

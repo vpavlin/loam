@@ -1,8 +1,10 @@
-# logos-shared-delivery
+# Loam
 
-**One `liblogosdelivery` (Waku) node per phone, shared by every Logos app** — instead of qaku, kym, the VPN, and each future app embedding its own in-process node.
+**One `liblogosdelivery` (Logos) node per phone, shared by every Logos app** — instead of qaku, kym, the VPN, and each future app embedding its own in-process node.
 
-This repo is the **design doc**, the original **runnable prototype** (`demo/`, still passing), and now the **`co.logos.delivery` service app** (`app/`) that implements it — a Kotlin foreground service + AIDL wrapping the shared `logos-transport` broker, which apps bind to over IPC.
+**Loam** is the shared-node app — the soil your apps grow in: a sprout-and-mesh brand for the one node many apps root into. (The Android service namespace stays `co.logos.delivery`; only the app/product name is Loam.)
+
+This repo is the **design doc**, the original **runnable prototype** (`demo/`, still passing), and now the **Loam service app** (`app/`, package `co.logos.delivery`) that implements it — a Kotlin foreground service + AIDL wrapping the shared `loam-transport` broker, which apps bind to over IPC.
 
 ```
 node demo/demo.mjs        # proves the core thesis (broker/routing), no arm64 node needed
@@ -12,7 +14,7 @@ node demo/demo.mjs        # proves the core thesis (broker/routing), no arm64 no
 
 ## Why
 
-Every Logos app today embeds its own node. Three Logos apps on a phone = **three Waku nodes**: three meshes, three discovery loops, three copies of relaying the shared shard, three wakelocks — sharing nothing. It already bites: kym runs with peer discovery *off* so its discv5 doesn't collide with qaku's on UDP 9000.
+Every Logos app today embeds its own node. Three Logos apps on a phone = **three Logos nodes**: three meshes, three discovery loops, three copies of relaying the shared shard, three wakelocks — sharing nothing. It already bites: kym runs with peer discovery *off* so its discv5 doesn't collide with qaku's on UDP 9000.
 
 The node code is *already* unified — qaku and kym ship a **byte-identical** `liblogosdelivery.so` + JNI + `LogosMessagingModule.kt`. The only reason there are many nodes is that each app process instantiates one.
 
@@ -26,7 +28,7 @@ So sharing can't be a singleton library each app loads (that's today's duplicati
 
 ```
   qaku ─┐
-  kym  ─┼─(AIDL/IPC)─▶  Logos Delivery service  ──▶  1 node  ──▶  Logos fleet
+  kym  ─┼─(AIDL/IPC)─▶  Loam service            ──▶  1 node  ──▶  Logos fleet
   vpn  ─┘                 broker + 1 node             (1 mesh, 1 discovery,
                                                         1 Core/Edge switch)
 ```
@@ -34,7 +36,7 @@ So sharing can't be a singleton library each app loads (that's today's duplicati
 - **Node owner** — wraps the identical JNI; brings up exactly one node; owns the single Core/Edge choice, discovery, reconnection for the whole device.
 - **Broker** — a `contentTopic → app` routing table. Each app registers its topics; inbound messages are dispatched to the owning app. Isolation is inherent: an app never receives a foreign topic, and couldn't decrypt it if it did (per-app AEAD key).
 - **IPC** — a bound-service API (AIDL) gated by **per-caller user consent** ("Allow App X?"), not a signature permission. The service resolves each binding caller's `(package + signing-cert sha256)` and grants access per identity — so a repackaged/re-signed app is a new, unapproved caller, and third-party (different-key) apps can still bind *with the owner's consent*. Unapproved callers get `{authorized:false}` and no node health.
-- **Client shim** — each app's `logos-transport` talks to the service when present, and **falls back to an embedded node** when it isn't, so every app still runs standalone.
+- **Client shim** — each app's `loam-transport` talks to the service when present, and **falls back to an embedded node** when it isn't, so every app still runs standalone.
 
 > **Security / isolation** — how one app is prevented from reading, forging, or interfering with another's data (end-to-end AEAD, per-caller consent, broker routing) plus the residual risks and recommended changes: see [`SECURITY.md`](SECURITY.md).
 
@@ -44,8 +46,8 @@ This is the desktop host role (one component owns delivery, app cores are its cl
 
 | Path | What it is | Status |
 |------|-----------|--------|
-| `app/` | **`co.logos.delivery` — the shared node service.** Expo/RN app: runs `SharedDeliveryNode`+`RealNode` from the transport package behind a Kotlin **foreground service + AIDL** (`app/native/deliveryservice`); other apps bind as broker `Tenant`s | **Service 0.0.14 — on-device verified** (consent + multi-tenant + offline cache) |
-| `app/src/lib/logos-transport-pkg` | The shared TS transport (submodule → `vpavlin/logos-transport`): broker + `RealNode` + `ServiceNode` + JNI | **real, on-device proven** (qaku/kym ship it) |
+| `app/` | **Loam — the shared node service** (package `co.logos.delivery`). Expo/RN app: runs `SharedDeliveryNode`+`RealNode` from the transport package behind a Kotlin **foreground service + AIDL** (`app/native/deliveryservice`); other apps bind as broker `Tenant`s | **Service 0.0.25 — on-device verified** (consent + multi-tenant + offline cache) |
+| `app/src/lib/logos-transport-pkg` | The shared TS transport (submodule → `vpavlin/loam-transport`; on-disk dir kept as `logos-transport-pkg`): broker + `RealNode` + `ServiceNode` + JNI | **real, on-device proven** (qaku/kym ship it) |
 | `src/broker.mjs` | `SharedDeliveryNode` + `Tenant` — the original broker prototype (the seam) | **real, tested** (superseded in prod by the submodule) |
 | `src/shard.mjs` | `shardFor()` ported verbatim from the apps' transport | **real** (matches prod) |
 | `src/mock-node.mjs` | In-memory `UnderlyingNode` for tests on any machine | **real** |
@@ -71,7 +73,7 @@ everything. Each approved app has a **"Cache while closed"** toggle in the conse
 with a live **"N waiting"** count.
 
 How it works (details in [`docs/adr/0003`](docs/adr/0003-offline-cache.md) /
-[logos-transport ADR 0011](https://github.com/vpavlin/logos-transport/blob/main/docs/adr/0011-per-tenant-offline-cache.md)):
+[loam-transport ADR 0011](https://github.com/vpavlin/loam-transport/blob/main/docs/adr/0011-per-tenant-offline-cache.md)):
 
 - When a caching app goes away the broker **`detach`es** its tenant — **keeps the
   subscription** (so the one node keeps receiving on its topic) and **buffers** the
@@ -86,11 +88,22 @@ How it works (details in [`docs/adr/0003`](docs/adr/0003-offline-cache.md) /
 **Verified on-device:** the "N waiting" count climbs while an app is killed and drains on
 reopen.
 
+## Second bearer & client UI (in `loam-transport`)
+
+Beyond pooling the one Logos node, the transport can move the **same sealed bytes** over
+a **BLE offline mesh** as a second bearer — so nearby phones sync with no fleet and no
+internet (loam-transport ADRs [0012](https://github.com/vpavlin/loam-transport/blob/main/docs/adr/0012-ble-mesh-bearer.md) BLE mesh bearer,
+[0013](https://github.com/vpavlin/loam-transport/blob/main/docs/adr/0013-desktop-ble-relay-gateway.md) desktop relay gateway,
+[0014](https://github.com/vpavlin/loam-transport/blob/main/docs/adr/0014-identity-first-ble-connections.md) identity-first connections).
+The SDK also ships ready-made React components so consuming apps don't hand-roll status UI:
+**`SharedNodeBanner`** (prompt to open/approve Loam), **`SharedNodeStatus`** (live
+peers/mesh/approval state), and **`LoamDebug`** (diagnostics panel).
+
 ## Design decisions
 
 See [`docs/adr/`](docs/adr/) — why it's a separate process (0001), how consent is keyed
 to the caller's real identity (0002), and the offline cache (0003). Transport-layer
-decisions live in the [`logos-transport`](https://github.com/vpavlin/logos-transport)
+decisions live in the [`loam-transport`](https://github.com/vpavlin/loam-transport)
 ADRs.
 
 ## What the demo proves (`node demo/demo.mjs` — 11/11)
@@ -107,8 +120,8 @@ The prototype proves the *routing/subscription* layer spans shards. The one thin
 ## Migration (nothing breaks)
 
 1. **Roll Edge** across apps — cheap N nodes now (in flight).
-2. **Refactor** each app's `logos-transport` off global singletons onto this broker interface (topic→callback). A win even against a still-embedded node.
-3. **Build the service** — wrap the identical JNI in a foreground service; expose the AIDL with a signature-permission gate.
+2. **Refactor** each app's `loam-transport` off global singletons onto this broker interface (topic→callback). A win even against a still-embedded node.
+3. **Build the service** — wrap the identical JNI in a foreground service; expose the AIDL gated by **per-caller user consent** ("Allow App X?"), keyed to the binding caller's `(package + signing-cert)` — *not* a signature permission (see [`SECURITY.md`](SECURITY.md) / ADR 0002).
 4. **Ship the client shim** per app (shared-if-present, else embedded). Migrate one app at a time; mixed states keep working.
 5. **Converge with logos-vpn** long term, so the device runs exactly one Logos node.
 

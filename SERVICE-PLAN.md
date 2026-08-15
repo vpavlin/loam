@@ -1,7 +1,14 @@
-# co.logos.delivery — the shared delivery node service (build plan)
+# Loam — the shared delivery node service (build plan)
+
+> **Historical plan — now partly superseded.** This is the original build plan for the
+> service (app namespace `co.logos.delivery`, product now **Loam**). Some of it shipped
+> differently than written: the *"signature-permission gate"* increment below actually
+> shipped as **per-caller user consent** (keyed to the caller's `(package + signing-cert)`),
+> and the AIDL surface differs from the sketch here. For the shipped behavior see the ADRs
+> and [`SECURITY.md`](SECURITY.md).
 
 **Confirmed architecture (2026-08-09):** the service **reuses the shared TS transport**
-(`vpavlin/logos-transport`). It is an Expo/RN app that runs `SharedDeliveryNode` + `RealNode`
+(`vpavlin/loam-transport`). It is an Expo/RN app that runs `SharedDeliveryNode` + `RealNode`
 from the package (one embedded node) and wraps them in a **Kotlin foreground service + AIDL**,
 so other apps bind over IPC and each becomes a real `Tenant` in the broker. One transport
 implementation, no Kotlin re-port, no parity problem — this is the payoff of the broker seam.
@@ -15,12 +22,13 @@ dev box — and it only fully proves out with a **second app binding to it**. So
 necessarily **build → test on-device → iterate**, not a single drop.
 
 ## Increments (each testable on the phone)
-1. **Standalone node app** — Expo app, submodule `logos-transport`, bring up ONE node via
+1. **Standalone node app** — Expo app, submodule `loam-transport`, bring up ONE node via
    the shared transport, keep it alive in a **foreground service** (persistent notification).
    *Test: connects and survives backgrounding.*
 2. **AIDL surface** (`ILogosDelivery` + `ILogosDeliveryCallback`) + the binder↔JS bridge +
    a tiny built-in test client. *Test: subscribe/send/receive across the binder in-process.*
-3. **Signature-permission gate** + external binding. *Test: a second app binds and syncs.*
+3. **Admission gate** + external binding. *Test: a second app binds and syncs.*
+   *(Shipped as per-caller user consent, not a signature permission — see SECURITY.md / ADR 0002.)*
 4. **qaku as first real client** — add a `ServiceNode` (AIDL-backed `UnderlyingNode`) beside
    `RealNode`; if the service is installed, qaku routes through it, else embeds (today's
    behaviour). *Test: qaku syncs via the service.*

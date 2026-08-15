@@ -1,5 +1,12 @@
 # Rename to Loam — cutover runbook
 
+> **Status: largely COMPLETE.** The app is **Loam** (`xyz.vpavlin.loam`, label/slug/scheme
+> done), the SDK repo + package are **`loam-transport`**, and consumers have been rewired.
+> What remains is intentional: a small set of identifiers is **deliberately KEPT** under the
+> old name — see the KEEP/PINNED tiers below (notably the SDK entry file `logos-transport.ts`
+> and the C++ umbrella `logos_transport.hpp`). This runbook is retained as the record of what
+> moved and what didn't.
+
 Goal: `logos-shared-delivery` → **Loam** (app id `xyz.vpavlin.loam`); shared libs
 `logos-transport` → `loam-transport`, `logos-sync` → `loam-sync`; every consumer updated.
 
@@ -19,14 +26,19 @@ Consumers (verified 2026-08-14):
 Rename what's **ours**; keep genuine **Logos Delivery** references (the upstream Waku node +
 the shared IPC contract). Three tiers:
 
-- **RENAME (ours):** `co.logos.mesh` → `xyz.vpavlin.loam.mesh` ✅ DONE+built; `logos-transport`
-  → `loam-transport`; `logos-sync` → `loam-sync`; C++ `logos_transport.hpp` → `loam_transport.hpp`;
-  TS `logos-transport.ts` → `loam-transport.ts` + package names; app id/label → Loam ✅.
-- **KEEP (Logos Delivery, on purpose):** the AIDL package/interface `co.logos.delivery` /
-  `ILogosDelivery` — it's the shared IPC contract every client app binds to; renaming it would
-  force a **lockstep** flip across the service + all 4 clients for zero benefit. Also the app
-  namespace `co.logos.delivery` (MainApplication/svc) stays — appId (`xyz.vpavlin.loam`) is
-  independent of namespace.
+- **RENAME (ours):** `co.logos.mesh` → `xyz.vpavlin.loam.mesh` ✅ DONE+built; the SDK **repo +
+  package** `logos-transport` → `loam-transport` ✅; `logos-sync` → `loam-sync`; app id/label →
+  Loam ✅.
+- **KEEP (Logos Delivery / stable entry points, on purpose):** the AIDL package/interface
+  `co.logos.delivery` / `ILogosDelivery` — it's the shared IPC contract every client app binds
+  to; renaming it would force a **lockstep** flip across the service + all 4 clients for zero
+  benefit. Also the app namespace `co.logos.delivery` (MainApplication/svc) stays — appId
+  (`xyz.vpavlin.loam`) is independent of namespace. **And the module entry points were
+  deliberately KEPT under the old name** (renaming them buys nothing and would churn every
+  consumer's import): the SDK entry file **`src/logos-transport.ts`** (still `package.json`
+  `main`) + the one-line re-export shim `logos-transport`, and the C++ umbrella header
+  **`basecamp/logos_transport.hpp`** (+ its include guards). The Loam brand lives in the repo/
+  package name and the app — not in these stable import paths.
 - **PINNED — cannot rename:** `com.receiverandroid.LogosMessagingModule`. The prebuilt
   `liblogos_messaging_jni.so` exports `Java_com_receiverandroid_LogosMessagingModule_*` symbols;
   renaming the Java package → `UnsatisfiedLinkError`. (Only movable by recompiling the JNI shim
@@ -42,9 +54,10 @@ the shared IPC contract). Three tiers:
    gh repo rename loam-sync      -R vpavlin/logos-sync
    ```
 2. In **each** lib's own repo: `package.json` `"name"` → `loam-transport` / `loam-sync`;
-   README/CHANGELOG/HANDOVER titles; the C++ umbrella `basecamp/logos_transport.hpp` →
-   `loam_transport.hpp` (+ include guards) — grep `logos_transport`, `logos-transport`,
-   `logos_sync`, `logos-sync`. Commit + push. (Tag a version so consumers can pin.)
+   README/CHANGELOG/HANDOVER titles. **NOTE (decided):** the C++ umbrella
+   `basecamp/logos_transport.hpp` and the SDK entry file `src/logos-transport.ts` are **KEPT**
+   under the old name (stable import paths — see the KEEP tier above); do **not** rename them.
+   Commit + push. (Tag a version so consumers can pin.)
 
 ## Stage B — rewire every consumer (scala, kym, qaku-logos, perun, logos-shared-delivery)
 

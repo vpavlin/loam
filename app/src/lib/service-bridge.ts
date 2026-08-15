@@ -33,11 +33,27 @@ function pushAuthorized() {
 async function persist() {
   try { await FileSystem.writeAsStringAsync(GRANTS, JSON.stringify([...grants.values()])); } catch { /* */ }
 }
+let grantsLoaded = false;
 async function loadGrants() {
+  if (grantsLoaded) return;
   try {
     const info = await FileSystem.getInfoAsync(GRANTS);
     if (info.exists) for (const g of JSON.parse(await FileSystem.readAsStringAsync(GRANTS))) grants.set(g.callerKey, g);
   } catch { /* */ }
+  grantsLoaded = true;
+}
+
+// Load the persisted approved-apps list from disk WITHOUT waiting for the node. Call this first,
+// before transport.start(), so the "Approved apps" list paints instantly on launch instead of
+// only after the node connects. The live request/route wiring still happens in initServiceBridge
+// (below) once the node is up — routing to clients genuinely needs a started node.
+export async function preloadGrants(change: () => void): Promise<boolean> {
+  if (!Bridge) return false;
+  onChange = change;
+  await loadGrants();
+  pushAuthorized();
+  change();
+  return true;
 }
 
 function activate(callerKey: string) {
