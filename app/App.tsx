@@ -24,7 +24,7 @@ export default function App() {
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
   // per-bearer live state
   const [net, setNet] = useState({ peers: -1, mesh: -1, rx: 0 });
-  const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false });
+  const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false, delivered: 0, dropped: 0 });
 
   useEffect(() => {
     (async () => {
@@ -58,6 +58,7 @@ export default function App() {
         peers: t.meshPeers?.() ?? 0,
         tx: c.bleTx, rx: c.bleRx,
         forced: t.meshForcedOn?.() ?? false,
+        delivered: c.bleRxDelivered ?? 0, dropped: c.bleRxDropped ?? 0,
       });
     }, 3000);
     return () => clearInterval(iv);
@@ -122,6 +123,11 @@ export default function App() {
         <Text style={s.bStats}>
           {ble.armed ? `${ble.peers} nearby   tx ${ble.tx}   rx ${ble.rx}` : "not active — arms automatically when needed"}
         </Text>
+        {ble.armed && (ble.rx > 0 || ble.dropped > 0) ? (
+          <Text style={[s.bStats, { color: ble.dropped > 0 && ble.delivered === 0 ? C.clay : C.inkFaint }]}>
+            {`routed: ${ble.delivered} delivered · ${ble.dropped} dropped (unowned topic)`}
+          </Text>
+        ) : null}
         <View style={s.ctrlRow}>
           <Text style={s.ctrlLabel}>Force on</Text>
           <Switch
