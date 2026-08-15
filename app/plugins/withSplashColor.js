@@ -8,7 +8,7 @@
 // prebuild, so this must be a config plugin (not a hand-edit of res/).
 const { withAndroidColors, AndroidConfig } = require("@expo/config-plugins");
 
-const COLOR = "#0f1115"; // QAKU app background
+const COLOR = "#14100C"; // Loam soil ground
 
 module.exports = (config) =>
   withAndroidColors(config, (cfg) => {

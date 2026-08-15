@@ -68,7 +68,7 @@ export default function App() {
       <View style={s.card}>
         <Text style={s.status}>{status}</Text>
         <Text style={s.info}>{info}</Text>
-        <Text style={[s.info, mesh !== "off" && { color: "#7ee787" }]}>BLE offline mesh: {mesh}</Text>
+        <Text style={[s.info, mesh !== "off" && { color: "#9CE873" }]}>BLE offline mesh: {mesh}</Text>
         {bleNative !== "" && <Text style={s.info}>BLE data: {bleNative}</Text>}
         <Text style={s.fg}>{fg}</Text>
       </View>
@@ -103,7 +103,7 @@ export default function App() {
             <Text style={s.ask}>wants to use the shared node</Text>
             <View style={s.row2}>
               <TouchableOpacity style={[s.btn, s.deny]} onPress={() => deny(c.callerKey)}><Text style={s.btnT}>Deny</Text></TouchableOpacity>
-              <TouchableOpacity style={[s.btn, s.allow]} onPress={() => approve(c.callerKey)}><Text style={[s.btnT, { color: "#fff" }]}>Allow</Text></TouchableOpacity>
+              <TouchableOpacity style={[s.btn, s.allow]} onPress={() => approve(c.callerKey)}><Text style={[s.btnT, { color: "#14100C" }]}>Allow</Text></TouchableOpacity>
             </View>
           </View>
         ))}
@@ -123,7 +123,7 @@ export default function App() {
                 <Switch
                   value={g.cache !== false}
                   onValueChange={(v) => setCache(g.callerKey, v)}
-                  trackColor={{ true: "#0b8f9c", false: "#3a2530" }}
+                  trackColor={{ true: "#4E8A3C", false: "#3A2E20" }}
                 />
                 <Text style={s.cacheLabel}>
                   {g.cache === false ? "Cache off" : `Cache while closed · ${g.buffered} waiting`}
@@ -138,32 +138,39 @@ export default function App() {
     </ScrollView>
   );
 }
+// Loam design language — the warm "soil & sprout" palette from vpavlin.github.io/loam.
+// ground/surface = soil, ink = cream, accent = sprout-green, clay = terracotta secondary.
+const C = {
+  ground: "#14100C", surface: "#1E1813", tileMid: "#2C2318", tileTop: "#3A2E20",
+  ink: "#ECE5D6", inkSoft: "#A08E76", inkFaint: "#7C6D58",
+  green: "#5CB636", sprout: "#8ECB6F", greenBright: "#9CE873", clay: "#D2894E",
+};
 const s = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: "#0d1117" },
+  scroll: { flex: 1, backgroundColor: C.ground },
   c: { alignItems: "center", padding: 24, paddingTop: 64, paddingBottom: 48 },
-  title: { color: "#e6e9ef", fontSize: 30, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: "#28c2d1", fontSize: 13, marginBottom: 22, fontFamily: "monospace", letterSpacing: 1 },
-  card: { backgroundColor: "#151b23", borderColor: "#252d38", borderWidth: 1, borderRadius: 14, paddingVertical: 18, paddingHorizontal: 26, alignItems: "center", minWidth: 280 },
-  status: { color: "#e6e9ef", fontSize: 17, marginBottom: 6 },
-  info: { color: "#8b94a3", fontSize: 13, fontFamily: "monospace" },
-  fg: { color: "#28c2d1", fontSize: 12, fontFamily: "monospace", marginTop: 6 },
-  label: { color: "#57616e", fontSize: 11, fontFamily: "monospace", letterSpacing: 1.5, marginTop: 26, marginBottom: 8, alignSelf: "flex-start" },
+  title: { color: C.ink, fontSize: 30, fontWeight: "800", letterSpacing: -0.5 },
+  sub: { color: C.sprout, fontSize: 13, marginBottom: 22, fontFamily: "monospace", letterSpacing: 1 },
+  card: { backgroundColor: C.surface, borderColor: C.tileMid, borderWidth: 1, borderRadius: 14, paddingVertical: 18, paddingHorizontal: 26, alignItems: "center", minWidth: 280 },
+  status: { color: C.ink, fontSize: 17, marginBottom: 6 },
+  info: { color: C.inkSoft, fontSize: 13, fontFamily: "monospace" },
+  fg: { color: C.sprout, fontSize: 12, fontFamily: "monospace", marginTop: 6 },
+  label: { color: C.inkFaint, fontSize: 11, fontFamily: "monospace", letterSpacing: 1.5, marginTop: 26, marginBottom: 8, alignSelf: "flex-start" },
   row: { flexDirection: "row", gap: 10, alignSelf: "flex-start" },
   row2: { flexDirection: "row", gap: 10, marginTop: 12 },
-  chip: { borderColor: "#252d38", borderWidth: 1, borderRadius: 9, paddingVertical: 8, paddingHorizontal: 26 },
-  chipOn: { backgroundColor: "#0b8f9c", borderColor: "#0b8f9c" },
-  chipT: { color: "#8b94a3", fontSize: 15, fontWeight: "700" }, chipTOn: { color: "#fff" },
-  hint: { color: "#57616e", fontSize: 11, marginTop: 8, alignSelf: "flex-start" },
-  reqCard: { backgroundColor: "#151b23", borderColor: "#0b8f9c", borderWidth: 1, borderRadius: 12, padding: 16, width: "100%", marginBottom: 10 },
-  appName: { color: "#e6e9ef", fontSize: 16, fontWeight: "700" },
-  appMeta: { color: "#8b94a3", fontSize: 11, fontFamily: "monospace", marginTop: 3 },
+  chip: { borderColor: C.tileMid, borderWidth: 1, borderRadius: 9, paddingVertical: 8, paddingHorizontal: 26 },
+  chipOn: { backgroundColor: C.green, borderColor: C.green },
+  chipT: { color: C.inkSoft, fontSize: 15, fontWeight: "700" }, chipTOn: { color: C.ground },
+  hint: { color: C.inkFaint, fontSize: 11, marginTop: 8, alignSelf: "flex-start" },
+  reqCard: { backgroundColor: C.surface, borderColor: C.green, borderWidth: 1, borderRadius: 12, padding: 16, width: "100%", marginBottom: 10 },
+  appName: { color: C.ink, fontSize: 16, fontWeight: "700" },
+  appMeta: { color: C.inkSoft, fontSize: 11, fontFamily: "monospace", marginTop: 3 },
   cacheRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
-  cacheLabel: { color: "#8a7580", fontSize: 12 },
-  ask: { color: "#28c2d1", fontSize: 13, marginTop: 8 },
+  cacheLabel: { color: C.inkSoft, fontSize: 12 },
+  ask: { color: C.sprout, fontSize: 13, marginTop: 8 },
   btn: { flex: 1, borderRadius: 9, paddingVertical: 11, alignItems: "center" },
-  allow: { backgroundColor: "#0b8f9c" }, deny: { borderColor: "#3a2530", borderWidth: 1, backgroundColor: "#1a1116", flex: 0, paddingHorizontal: 20 },
-  btnT: { color: "#c99", fontSize: 14, fontWeight: "700" },
-  grantRow: { flexDirection: "row", alignItems: "center", backgroundColor: "#151b23", borderColor: "#252d38", borderWidth: 1, borderRadius: 12, padding: 14, width: "100%", marginBottom: 8, gap: 10 },
-  empty: { color: "#57616e", fontSize: 13, alignSelf: "flex-start", lineHeight: 18 },
-  note: { color: "#57616e", fontSize: 11, marginTop: 32, textAlign: "center", lineHeight: 17 },
+  allow: { backgroundColor: C.green }, deny: { borderColor: C.tileTop, borderWidth: 1, backgroundColor: C.tileMid, flex: 0, paddingHorizontal: 20 },
+  btnT: { color: C.inkSoft, fontSize: 14, fontWeight: "700" },
+  grantRow: { flexDirection: "row", alignItems: "center", backgroundColor: C.surface, borderColor: C.tileMid, borderWidth: 1, borderRadius: 12, padding: 14, width: "100%", marginBottom: 8, gap: 10 },
+  empty: { color: C.inkFaint, fontSize: 13, alignSelf: "flex-start", lineHeight: 18 },
+  note: { color: C.inkFaint, fontSize: 11, marginTop: 32, textAlign: "center", lineHeight: 17 },
 });

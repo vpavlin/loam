@@ -2,7 +2,7 @@
   "expo": {
     "name": "Loam",
     "slug": "loam",
-    "version": "0.0.23",
+    "version": "0.0.24",
     "platforms": [
       "android"
     ],
@@ -12,13 +12,12 @@
     },
     "android": {
       "package": "xyz.vpavlin.loam",
-      "versionCode": 23,
+      "versionCode": 24,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundImage": "./assets/adaptive-bg.png",
-        "backgroundColor": "#0b8f9c"
+        "backgroundColor": "#14100C"
       },
-      "backgroundColor": "#141415"
+      "backgroundColor": "#14100C"
     },
     "plugins": [
       "./plugins/withSplashColor.js",
@@ -28,7 +27,7 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#ffc533"
+          "color": "#82D257"
         }
       ],
       "./plugins/withForegroundService.js",
@@ -39,11 +38,11 @@
       "comment": "versionCode here is the source of truth; assert it matches the generated android/app/build.gradle after prebuild."
     },
     "androidStatusBar": {
-      "backgroundColor": "#141415",
+      "backgroundColor": "#14100C",
       "barStyle": "light-content",
       "translucent": false
     },
-    "backgroundColor": "#141415",
+    "backgroundColor": "#14100C",
     "scheme": "loam"
   }
 }
