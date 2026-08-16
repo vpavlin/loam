@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import * as Clipboard from "expo-clipboard";
@@ -23,6 +23,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [fg, setFg] = useState("foreground service: …");
   const [tele, setTele] = useState<{ enabled: boolean; buffered?: number; lastFlush?: string }>({ enabled: false });
+  const [teleSecret, setTeleSecret] = useState("");   // the telemetry secret, persisted; empty = off
   const [meshForced, setMeshForced] = useState(false);
   const [mode, setMode] = useState<Mode>("Core");
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
@@ -65,10 +66,16 @@ export default function App() {
         }
         setFg("foreground service: " + (await startKeepAlive()));
         await initServiceBridge(() => setTick((n) => n + 1));
-        // Offline-first telemetry is now a transport FEATURE (see loam-transport/telemetry.ts): one
-        // call and the node buffers its own diagnostics offline + flushes to a sealed topic when the
-        // fleet returns. Opt-in via EXPO_PUBLIC_TELEMETRY_SECRET; inert otherwise.
-        try { await transport.enableTelemetry(process.env.EXPO_PUBLIC_TELEMETRY_SECRET || ""); } catch { /* */ }
+        // Offline-first telemetry is a transport FEATURE: the node buffers its own diagnostics offline +
+        // flushes to a sealed topic when the fleet returns. Configured at RUNTIME (persisted secret, set
+        // in the UI below) with a build-time EXPO_PUBLIC_TELEMETRY_SECRET fallback. Empty = off.
+        try {
+          let sec = "";
+          try { sec = (await SecureStore.getItemAsync("loam-telemetry-secret")) || ""; } catch { /* */ }
+          if (!sec) sec = process.env.EXPO_PUBLIC_TELEMETRY_SECRET || "";
+          setTeleSecret(sec);
+          if (sec) await transport.enableTelemetry(sec);
+        } catch { /* */ }
       } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
     })();
     const iv = setInterval(async () => {
@@ -98,6 +105,12 @@ export default function App() {
   const pick = async (m: Mode) => { try { await SecureStore.setItemAsync("logos-delivery-nodemode", m); } catch { /* */ } setMode(m); };
   const { pending, granted } = serviceBridgeAvailable() ? lists() : { pending: [] as Client[], granted: [] as any[] };
   const netUp = net.peers > 0;
+  // Runtime telemetry config: persist the secret and (re)start telemetry on it; empty secret = off.
+  const applyTelemetry = async (secret: string) => {
+    setTeleSecret(secret);
+    try { await SecureStore.setItemAsync("loam-telemetry-secret", secret); } catch { /* */ }
+    try { await transport.enableTelemetry(secret); } catch { /* */ }
+  };
   const bleColor = ble.armed ? (ble.peers > 0 ? C.green : C.amber) : C.inkFaint;
 
   return (
@@ -212,7 +225,29 @@ export default function App() {
       </View>
 
       <Text style={s.fg}>{fg}</Text>
-      {tele.enabled ? <Text style={s.fg}>telemetry: {tele.buffered ?? 0} buffered · last flush {tele.lastFlush || "—"}</Text> : null}
+
+      {/* Telemetry (diagnostics) — enable + configure at runtime; empty secret = off */}
+      <View style={s.teleBox}>
+        <Text style={s.teleLabel}>
+          TELEMETRY {tele.enabled ? `· on · ${tele.buffered ?? 0} buffered · flush ${tele.lastFlush || "—"}` : "· off"}
+        </Text>
+        <View style={s.teleRow}>
+          <TextInput
+            style={s.teleInput}
+            value={teleSecret}
+            onChangeText={setTeleSecret}
+            onSubmitEditing={() => applyTelemetry(teleSecret)}
+            placeholder="shared telemetry secret (empty = off)"
+            placeholderTextColor={C.inkFaint}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <TouchableOpacity style={s.teleApply} onPress={() => applyTelemetry(teleSecret)}>
+            <Text style={s.teleApplyT}>Apply</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={s.teleHint}>Buffers node diagnostics offline; flushes to a sealed topic when online. The hub decodes it with the same secret.</Text>
+      </View>
 
       {pending.length > 0 && <>
         <Text style={s.label}>REQUESTS</Text>
@@ -272,6 +307,13 @@ const s = StyleSheet.create({
   status: { color: C.inkSoft, fontSize: 14 },
   copyHint: { color: C.green, fontSize: 11, fontFamily: "monospace" },
   dot: { width: 9, height: 9, borderRadius: 5 },
+  teleBox: { marginTop: 14, backgroundColor: C.surface, borderColor: C.tileTop, borderWidth: 1, borderRadius: 12, padding: 12, gap: 8 },
+  teleLabel: { color: C.inkFaint, fontSize: 11, fontFamily: "monospace", letterSpacing: 1.2 },
+  teleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  teleInput: { flex: 1, backgroundColor: C.tileMid, borderColor: C.tileTop, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: C.ink, fontFamily: "monospace", fontSize: 12 },
+  teleApply: { backgroundColor: C.green, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 9 },
+  teleApplyT: { color: C.ground, fontWeight: "700", fontSize: 13 },
+  teleHint: { color: C.inkFaint, fontSize: 10, lineHeight: 14 },
   label: { color: C.inkFaint, fontSize: 11, fontFamily: "monospace", letterSpacing: 1.5, marginTop: 26, marginBottom: 10 },
   // bearer card
   bearer: { backgroundColor: C.surface, borderColor: C.tileMid, borderWidth: 1, borderRadius: 14, padding: 16, marginBottom: 12 },
