@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
+import * as Clipboard from "expo-clipboard";
 import * as transport from "./src/lib/logos-transport";
 import { getDeviceId } from "./src/lib/device";
 import { LoamMeshRadio } from "./src/lib/logos-transport-pkg/native/blemesh/loam-mesh-radio";
@@ -19,6 +20,7 @@ const shortCert = (c: string) => (c ? c.slice(0, 10) + "…" : "?");
 
 export default function App() {
   const [status, setStatus] = useState("starting…");
+  const [copied, setCopied] = useState(false);
   const [fg, setFg] = useState("foreground service: …");
   const [meshForced, setMeshForced] = useState(false);
   const [mode, setMode] = useState<Mode>("Core");
@@ -96,11 +98,25 @@ export default function App() {
       <Text style={s.title}>Loam</Text>
       <Text style={s.sub}>the soil your apps grow in</Text>
 
-      {/* overall */}
-      <View style={s.statusRow}>
+      {/* overall — tap to copy a full stats dump (on-device bug reports without retyping) */}
+      <TouchableOpacity style={s.statusRow} activeOpacity={0.6} onPress={async () => {
+        const dump = [
+          `Loam  ${new Date().toISOString()}`,
+          `status: ${status}`,
+          `${fg}`,
+          `[logos network] peers:${net.peers} mesh:${net.mesh} rx:${net.rx} mode:${mode}`,
+          `[ble mesh] armed:${ble.armed} forced:${ble.forced} nearby:${ble.peers} tx:${ble.tx} rx:${ble.rx} delivered:${ble.delivered} dropped:${ble.dropped}`,
+          `  own:  ${ble.own_t.join("  ") || "—"}`,
+          `  tx:   ${ble.tx_t.join("  ") || "—"}`,
+          `  del:  ${ble.del_t.join("  ") || "—"}`,
+          `  drop: ${ble.drop_t.join("  ") || "—"}`,
+        ].join("\n");
+        try { await Clipboard.setStringAsync(dump); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* */ }
+      }}>
         <View style={[s.dot, { backgroundColor: netUp ? C.green : C.amber }]} />
         <Text style={s.status}>{status}</Text>
-      </View>
+        <Text style={s.copyHint}>{copied ? "  copied ✓" : "  ⧉ copy"}</Text>
+      </TouchableOpacity>
 
       <Text style={s.label}>BEARERS</Text>
 
@@ -246,6 +262,7 @@ const s = StyleSheet.create({
   sub: { color: C.sprout, fontSize: 13, marginBottom: 20, fontFamily: "monospace", letterSpacing: 1, textAlign: "center" },
   statusRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   status: { color: C.inkSoft, fontSize: 14 },
+  copyHint: { color: C.green, fontSize: 11, fontFamily: "monospace" },
   dot: { width: 9, height: 9, borderRadius: 5 },
   label: { color: C.inkFaint, fontSize: 11, fontFamily: "monospace", letterSpacing: 1.5, marginTop: 26, marginBottom: 10 },
   // bearer card
