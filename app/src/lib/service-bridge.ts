@@ -78,6 +78,14 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
       if (r.kind === "register") {
         const client: Client = { callerKey: ck, appId: r.appId, pkg: r.pkg, cert: r.cert, label: r.label };
         if (grants.get(ck)?.granted) { activate(ck); return; }           // already approved
+        if (process.env.EXPO_PUBLIC_AUTO_APPROVE === "1") {              // TEST/CI: skip the consent tap
+          grants.set(ck, { ...client, granted: true, cache: true }); await persist(); pushAuthorized();
+          activate(ck);
+          for (const t of queued.get(ck) || []) { try { await transport.clientSubscribe(ck, t); } catch { /* */ } }
+          queued.delete(ck);
+          onChange && onChange();
+          return;
+        }
         if (!pending.has(ck)) {
           pending.set(ck, client);
           try { await Notifications.scheduleNotificationAsync({ content: { title: "Allow an app to use Loam?", body: `${client.label} wants to use the shared node — tap to review.` }, trigger: null }); } catch { /* */ }

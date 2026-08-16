@@ -50,7 +50,11 @@ export default function App() {
           let hb = 0;
           setInterval(() => { try { transport.publishSealed(PROBE_TOPIC, new TextEncoder().encode("hb:" + deviceId + ":" + hb++)); } catch { /* */ } }, 4000);
         }
-        await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => !!meshWsUrl, onStatus: setStatus });
+        // Don't let a node-start failure skip the service bridge + keepalive below. On an x86_64
+        // emulator start throws (no native Waku lib), but the mesh + AIDL approval flow must still run.
+        try {
+          await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => !!meshWsUrl, onStatus: setStatus });
+        } catch (e: any) { setStatus("node start failed (mesh/AIDL still up): " + String((e && e.message) || e)); }
         // Device-wide BLE offline mesh (ADR 0012): register the radio once; the transport auto-arms
         // the mesh when the fleet path drops — so EVERY bound app keeps syncing over Bluetooth.
         if (!meshWsUrl) {
