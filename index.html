@@ -228,6 +228,7 @@
       <a href="#substrate">Substrate</a>
       <a href="#apps">Apps</a>
       <a href="#how">How it works</a>
+      <a href="#observe">Telemetry</a>
       <a class="ghub" href="https://github.com/vpavlin/loam">GitHub&nbsp;↗</a>
     </nav>
   </div>
@@ -378,7 +379,37 @@
   </div>
 </section>
 
-<section id="start">
+<section id="observe">
+  <div class="wrap">
+    <p class="eyebrow">Read the ground</p>
+    <h2 class="section-head" style="font-size:clamp(28px,4vw,40px);font-weight:600;margin-top:12px">See every node — even the offline ones.</h2>
+    <p style="color:var(--ink-soft);margin-top:14px;max-width:58ch">The failures that matter happen off the network — a dead zone, a basement, a room on Bluetooth alone — where you can’t watch live. So each node keeps its own diagnostics and, the moment it reaches the fleet again, flushes them — <em>sealed</em> — to a telemetry topic. A collector turns them into Prometheus metrics, so phones and desktop nodes sit side by side in Grafana, the offline stretch and all. Opt-in, ciphertext-only, and off by default.</p>
+    <div class="principles">
+      <div class="pr">
+        <div class="n mono">01</div>
+        <h3>Buffered offline</h3>
+        <p>A node records its own health to disk while it’s cut off, then drains the backlog to the fleet when a path reappears — so the offline story survives, not just the moments you happened to be watching.</p>
+      </div>
+      <div class="pr">
+        <div class="n mono">02</div>
+        <h3>Sealed &amp; opt-in</h3>
+        <p>Snapshots are encrypted; the topic and key derive from one shared secret, so only a holder can locate or read them. Nothing ships unless you turn it on.</p>
+      </div>
+      <div class="pr">
+        <div class="n mono">03</div>
+        <h3>One pane, every node</h3>
+        <p>Android and Basecamp publish the same shape over delivery; the hub decodes it into <span class="mono">/metrics</span> labelled by device and platform — compare a phone against a desktop node in one dashboard.</p>
+      </div>
+    </div>
+    <div class="install" style="margin-top:34px">
+      <h3>Watch it from the hub</h3>
+      <p>The collector subscribes the telemetry topic and serves Prometheus metrics — point Grafana at it:</p>
+      <code class="fpurl mono">logos-hub telemetry loam <span class="k">--secret</span> &lt;shared&gt; <span class="k">--port</span> 9109</code>
+    </div>
+  </div>
+</section>
+
+<section id="start" style="background:var(--surface)">
   <div class="wrap">
     <p class="eyebrow">Get started</p>
     <h2 class="section-head" style="font-size:clamp(28px,4vw,40px);font-weight:600;margin-top:12px">Open the ground up.</h2>
@@ -416,6 +447,7 @@
       <a href="https://github.com/vpavlin/loam">GitHub</a>
       <a href="#substrate">Substrate</a>
       <a href="#apps">Apps</a>
+      <a href="#observe">Telemetry</a>
     </div>
   </div>
 </footer>
