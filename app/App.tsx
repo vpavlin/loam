@@ -5,6 +5,7 @@ import * as Notifications from "expo-notifications";
 import * as transport from "./src/lib/logos-transport";
 import { getDeviceId } from "./src/lib/device";
 import { LoamMeshRadio } from "./src/lib/logos-transport-pkg/native/blemesh/loam-mesh-radio";
+import { WsMeshRadio } from "./src/lib/logos-transport-pkg/src/ws-mesh-radio";
 import { startKeepAlive } from "./src/lib/keepalive";
 import { preloadGrants, initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, setCache, pushMetrics, Client } from "./src/lib/service-bridge";
 
@@ -36,10 +37,25 @@ export default function App() {
         setMode(m); transport.setNodeMode(m);
         try { await Notifications.requestPermissionsAsync(); } catch { /* */ }
         const deviceId = await getDeviceId();
-        await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => false, onStatus: setStatus });
+        // EXPO_PUBLIC_MESH_WS_URL (a test/CI build flag) swaps the native GATT radio for a mock
+        // WebSocket radio pointed at test/tools/mesh-relay.js — two nodes then mesh with no Bluetooth,
+        // so bearer switching is provable headlessly. Unset in prod → real BLE (registered after start).
+        const meshWsUrl = process.env.EXPO_PUBLIC_MESH_WS_URL;
+        if (meshWsUrl) {
+          // TEST BUILD: arm the mock mesh + heartbeat BEFORE start. The mesh bearer is independent of
+          // the Waku node (which never settles on an x86_64 emulator — no native delivery lib), so the
+          // whole transport (broker route, fan-out, dedup) is exercised over the mock radio regardless.
+          try { transport.setMeshRadio(() => new WsMeshRadio(deviceId, meshWsUrl)); transport.forceMesh(true); } catch { /* */ }
+          try { transport.join([PROBE_TOPIC]); } catch { /* */ }  // own the probe topic so received frames route (delivered, not "unowned")
+          let hb = 0;
+          setInterval(() => { try { transport.publishSealed(PROBE_TOPIC, new TextEncoder().encode("hb:" + deviceId + ":" + hb++)); } catch { /* */ } }, 4000);
+        }
+        await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => !!meshWsUrl, onStatus: setStatus });
         // Device-wide BLE offline mesh (ADR 0012): register the radio once; the transport auto-arms
         // the mesh when the fleet path drops — so EVERY bound app keeps syncing over Bluetooth.
-        try { transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio(deviceId) : null); } catch { /* */ }
+        if (!meshWsUrl) {
+          try { transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio(deviceId) : null); } catch { /* */ }
+        }
         setFg("foreground service: " + (await startKeepAlive()));
         await initServiceBridge(() => setTick((n) => n + 1));
       } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
