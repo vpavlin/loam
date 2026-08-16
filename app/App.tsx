@@ -23,7 +23,8 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [fg, setFg] = useState("foreground service: …");
   const [tele, setTele] = useState<{ enabled: boolean; buffered?: number; lastFlush?: string }>({ enabled: false });
-  const [teleSecret, setTeleSecret] = useState("");   // the telemetry secret, persisted; empty = off
+  const [teleSecret, setTeleSecret] = useState("");   // the telemetry secret — persisted, kept even when off
+  const [teleOn, setTeleOn] = useState(false);        // explicit enable toggle — persisted separately
   const [meshForced, setMeshForced] = useState(false);
   const [mode, setMode] = useState<Mode>("Core");
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
@@ -73,8 +74,10 @@ export default function App() {
           let sec = "";
           try { sec = (await SecureStore.getItemAsync("loam-telemetry-secret")) || ""; } catch { /* */ }
           if (!sec) sec = process.env.EXPO_PUBLIC_TELEMETRY_SECRET || "";
-          setTeleSecret(sec);
-          if (sec) await transport.enableTelemetry(sec);
+          let on = false;
+          try { on = (await SecureStore.getItemAsync("loam-telemetry-enabled")) === "1"; } catch { /* */ }
+          setTeleSecret(sec); setTeleOn(on);
+          if (on && sec) await transport.enableTelemetry(sec);   // enabled only when explicitly toggled on
         } catch { /* */ }
       } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
     })();
@@ -106,10 +109,18 @@ export default function App() {
   const { pending, granted } = serviceBridgeAvailable() ? lists() : { pending: [] as Client[], granted: [] as any[] };
   const netUp = net.peers > 0;
   // Runtime telemetry config: persist the secret and (re)start telemetry on it; empty secret = off.
-  const applyTelemetry = async (secret: string) => {
+  // Persist the secret (kept even when telemetry is off, so it survives updates + toggling); if
+  // telemetry is currently on, reconfigure it onto the new secret.
+  const saveSecret = async (secret: string) => {
     setTeleSecret(secret);
     try { await SecureStore.setItemAsync("loam-telemetry-secret", secret); } catch { /* */ }
-    try { await transport.enableTelemetry(secret); } catch { /* */ }
+    if (teleOn && secret) { try { await transport.enableTelemetry(secret); } catch { /* */ } }
+  };
+  // Explicit enable/disable. Turning off keeps the secret. Turning on needs a secret set.
+  const toggleTelemetry = async (on: boolean) => {
+    setTeleOn(on);
+    try { await SecureStore.setItemAsync("loam-telemetry-enabled", on ? "1" : "0"); } catch { /* */ }
+    try { await transport.enableTelemetry(on ? teleSecret : ""); } catch { /* */ }
   };
   const bleColor = ble.armed ? (ble.peers > 0 ? C.green : C.amber) : C.inkFaint;
 
@@ -226,24 +237,32 @@ export default function App() {
 
       <Text style={s.fg}>{fg}</Text>
 
-      {/* Telemetry (diagnostics) — enable + configure at runtime; empty secret = off */}
+      {/* Telemetry (diagnostics) — explicit toggle; the secret is kept even when off */}
       <View style={s.teleBox}>
-        <Text style={s.teleLabel}>
-          TELEMETRY {tele.enabled ? `· on · ${tele.buffered ?? 0} buffered · flush ${tele.lastFlush || "—"}` : "· off"}
-        </Text>
+        <View style={s.teleRow}>
+          <Text style={[s.teleLabel, { flex: 1 }]}>
+            TELEMETRY {tele.enabled ? `· ${tele.buffered ?? 0} buffered · flush ${tele.lastFlush || "—"}` : (teleSecret ? "· off" : "· set a secret")}
+          </Text>
+          <Switch
+            value={teleOn}
+            disabled={!teleSecret}
+            trackColor={{ true: "#4E8A3C", false: "#3A2E20" }}
+            onValueChange={toggleTelemetry}
+          />
+        </View>
         <View style={s.teleRow}>
           <TextInput
             style={s.teleInput}
             value={teleSecret}
             onChangeText={setTeleSecret}
-            onSubmitEditing={() => applyTelemetry(teleSecret)}
-            placeholder="shared telemetry secret (empty = off)"
+            onSubmitEditing={() => saveSecret(teleSecret)}
+            placeholder="shared telemetry secret"
             placeholderTextColor={C.inkFaint}
             autoCapitalize="none"
             autoCorrect={false}
           />
-          <TouchableOpacity style={s.teleApply} onPress={() => applyTelemetry(teleSecret)}>
-            <Text style={s.teleApplyT}>Apply</Text>
+          <TouchableOpacity style={s.teleApply} onPress={() => saveSecret(teleSecret)}>
+            <Text style={s.teleApplyT}>Save</Text>
           </TouchableOpacity>
         </View>
         <Text style={s.teleHint}>Buffers node diagnostics offline; flushes to a sealed topic when online. The hub decodes it with the same secret.</Text>
