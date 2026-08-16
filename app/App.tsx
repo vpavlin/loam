@@ -8,7 +8,6 @@ import { getDeviceId } from "./src/lib/device";
 import { LoamMeshRadio } from "./src/lib/logos-transport-pkg/native/blemesh/loam-mesh-radio";
 import { WsMeshRadio } from "./src/lib/logos-transport-pkg/src/ws-mesh-radio";
 import { startKeepAlive } from "./src/lib/keepalive";
-import * as telemetry from "./src/lib/telemetry";
 import { preloadGrants, initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, setCache, pushMetrics, Client } from "./src/lib/service-bridge";
 
 // The device-wide shared delivery node runs ONE Loam node in a foreground service; other apps
@@ -23,6 +22,7 @@ export default function App() {
   const [status, setStatus] = useState("starting…");
   const [copied, setCopied] = useState(false);
   const [fg, setFg] = useState("foreground service: …");
+  const [tele, setTele] = useState<{ enabled: boolean; buffered?: number; lastFlush?: string }>({ enabled: false });
   const [meshForced, setMeshForced] = useState(false);
   const [mode, setMode] = useState<Mode>("Core");
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
@@ -65,12 +65,10 @@ export default function App() {
         }
         setFg("foreground service: " + (await startKeepAlive()));
         await initServiceBridge(() => setTick((n) => n + 1));
-        // Offline-first telemetry (opt-in via EXPO_PUBLIC_TELEMETRY_SECRET): own the device id +
-        // subscribe the telemetry topic so buffered snapshots can flush to the fleet when it returns.
-        if (telemetry.telemetryEnabled()) {
-          telemetry.setDevice(deviceId);
-          try { await transport.join([telemetry.TELEMETRY_TOPIC]); } catch { /* */ }
-        }
+        // Offline-first telemetry is now a transport FEATURE (see loam-transport/telemetry.ts): one
+        // call and the node buffers its own diagnostics offline + flushes to a sealed topic when the
+        // fleet returns. Opt-in via EXPO_PUBLIC_TELEMETRY_SECRET; inert otherwise.
+        try { await transport.enableTelemetry(process.env.EXPO_PUBLIC_TELEMETRY_SECRET || ""); } catch { /* */ }
       } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
     })();
     const iv = setInterval(async () => {
@@ -91,15 +89,8 @@ export default function App() {
         delivered: c.bleRxDelivered ?? 0, dropped: c.bleRxDropped ?? 0,
         tx_t: d.tx, own_t: d.owned, del_t: d.deliv, drop_t: d.drop,
       });
-      // telemetry: snapshot every tick (durable, offline-safe); flush to the fleet when it's up
-      if (telemetry.telemetryEnabled()) {
-        telemetry.record({
-          peers: c.peers, mesh: meshVal, rxRaw: c.rxRaw, mode: transport.getNodeMode(),
-          bleTx: c.bleTx, bleRx: c.bleRx, bleDelivered: c.bleRxDelivered ?? 0, bleDropped: c.bleRxDropped ?? 0,
-          armed: t.meshEnabled?.() ?? false, forced: t.meshForcedOn?.() ?? false,
-        }).catch(() => {});
-        if (c.peers > 0) telemetry.flush().catch(() => {});
-      }
+      // telemetry self-drives inside the transport now — just read its status for the UI.
+      try { setTele(transport.telemetryStatus()); } catch { /* */ }
     }, 3000);
     return () => clearInterval(iv);
   }, []);
@@ -221,6 +212,7 @@ export default function App() {
       </View>
 
       <Text style={s.fg}>{fg}</Text>
+      {tele.enabled ? <Text style={s.fg}>telemetry: {tele.buffered ?? 0} buffered · last flush {tele.lastFlush || "—"}</Text> : null}
 
       {pending.length > 0 && <>
         <Text style={s.label}>REQUESTS</Text>
