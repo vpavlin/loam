@@ -22,3 +22,4 @@ repo's ADRs cover only what is specific to the **service** that wraps it.
 - [0001](0001-shared-node-in-its-own-process.md) — The shared node must live in its own process (service + AIDL)
 - [0002](0002-consent-from-binder-identity.md) — Consent is per app, keyed by the caller's real identity
 - [0003](0003-offline-cache.md) — Offline cache: hold a closed app's messages, opt-in per app
+- [0004](0004-identity-as-a-loam-service.md) — Identity is a loam service: keys + signing (incl. Keycard) in loam, UI in each app

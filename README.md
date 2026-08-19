@@ -102,9 +102,21 @@ peers/mesh/approval state), and **`LoamDebug`** (diagnostics panel).
 ## Design decisions
 
 See [`docs/adr/`](docs/adr/) — why it's a separate process (0001), how consent is keyed
-to the caller's real identity (0002), and the offline cache (0003). Transport-layer
-decisions live in the [`loam-transport`](https://github.com/vpavlin/loam-transport)
-ADRs.
+to the caller's real identity (0002), the offline cache (0003), and **identity as a loam
+service (0004)**. Transport-layer decisions live in the
+[`loam-transport`](https://github.com/vpavlin/loam-transport) ADRs.
+
+## Identity is a loam service too (ADR 0004)
+
+Beyond pooling the node, loam also **holds your keys and signs for you** — so an app never
+handles a private key. Same split as transport: **loam owns custody, the app renders the UI.**
+loam knows three identity kinds — the built-in **device** key, extra named **software** keys,
+and a **Keycard** — and binds each container (a calendar, a budget, a room) to one; an app calls
+`signDigest(container, digest)` and stamps the returned `pub`/`sig`. The desktop implementation
+ships in **[`loam-basecamp`](https://github.com/vpavlin/loam-basecamp)**'s `loam_core` **0.3.0**,
+with Keycard delegated on-card to Alisher's `keycard` module at `m/43'/60'/1582'` — **the same path
+the phone signs at, so one physical card is one identity across phone + desktop.** The mobile
+registry converges onto the same service over time.
 
 ## What the demo proves (`node demo/demo.mjs` — 11/11)
 
