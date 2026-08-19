@@ -12,7 +12,13 @@ const Bridge = (NativeModules as any).LogosDeliveryBridge;
 const emitter = Bridge ? new NativeEventEmitter(Bridge) : null;
 export function serviceBridgeAvailable(): boolean { return !!Bridge; }
 // Cache the node's live peers/mesh natively so bound clients can read it over AIDL.
-export function pushMetrics(peers: number, mesh: number) { try { Bridge?.setMetrics(JSON.stringify({ peers, mesh })); } catch { /* */ } }
+// Expose the node's live health to bound clients over AIDL. `ble` carries the BLE mesh bearer's
+// liveness + counters so a client (which runs no mesh of its own) isn't blind to Bluetooth: it can
+// show the mesh in its status/LoamDebug and, crucially, treat a nearby BLE peer as reachability so
+// its publishes confirm over BLE-only. The service stays a blind pipe — this is node health, not data.
+export function pushMetrics(peers: number, mesh: number, ble?: { peers: number; armed: boolean; forced: boolean; tx: number; rx: number; delivered: number; dropped: number }) {
+  try { Bridge?.setMetrics(JSON.stringify({ peers, mesh, ble })); } catch { /* */ }
+}
 
 const GRANTS = (FileSystem.documentDirectory || "") + "logos-delivery-grants.json";
 // Offline cache ring size per approved app (ADR 0011). Bounded; on overflow the
@@ -96,6 +102,10 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
         else { const q = queued.get(ck) || []; q.push(r.topic); queued.set(ck, q); }   // buffer until approved
       } else if (r.kind === "send") {
         if (active.has(ck)) await transport.publishSealed(r.topic, toByteArray(r.sealedB64));   // ungranted sends dropped
+      } else if (r.kind === "storeSync") {
+        // Cold-start history pull for this client: run the node's store query and route each stored
+        // message back to the client through the normal receive callback (folded like a live msg).
+        if (active.has(ck)) await transport.clientStoreSync(ck);
       } else if (r.kind === "touch") {
         if (!grants.get(ck)?.granted && !pending.has(ck)) {
           pending.set(ck, { callerKey: ck, appId: r.appId || "", pkg: r.pkg, cert: r.cert, label: r.label });
