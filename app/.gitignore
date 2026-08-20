@@ -1,6 +1,8 @@
 node_modules/
 .expo/
-android/
+# Anchor to the app root: this is the expo-generated native project (app/android),
+# NOT the hand-written native/deliveryservice/android/java source, which must stay tracked.
+/android/
 ios/
 dist/
 *.log

@@ -45,8 +45,7 @@ const sh = (cmd) => new Promise((res) => execFile("bash", ["-lc", cmd], { maxBuf
 function parseMetrics(s) {
   try {
     let o = JSON.parse(s.trim());
-    // unwrap a logoscore/hub {"result": <json-string-or-object>, "status":...} envelope
-    if (o && o.result !== undefined) o = typeof o.result === "string" ? JSON.parse(o.result) : o.result;
+    if (o && typeof o.result === "string") { try { o = JSON.parse(o.result); } catch { /* */ } }
     return o && typeof o === "object" ? o : null;
   } catch { return null; }
 }
