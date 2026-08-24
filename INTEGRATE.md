@@ -7,6 +7,10 @@ instead of embedding its own — saving battery, data, and duplicate meshes. The
 
 Proven with two independently-built apps (qaku on shard 0, KYM on shard 7) sharing one node.
 
+> **Building a Basecamp (desktop) app?** This guide is Android — the shared-node service +
+> owner approval. On desktop there's no binder approval; you depend on the `loam_core`
+> module facade in-process. See **[loam-basecamp `INTEGRATE.md`](https://github.com/vpavlin/loam-basecamp/blob/master/INTEGRATE.md)**.
+
 ---
 
 ## What you get, and the trust model
