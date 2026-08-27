@@ -117,6 +117,9 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
       }
     } catch { /* never throw in the bridge */ }
   });
+  // The request listener is now attached — tell native to replay any register/subscribe/send that
+  // was buffered while the JS/node was down (an app that bound & subscribed before Loam was running).
+  try { (Bridge as any).jsReady?.(); } catch { /* */ }
   return true;
 }
 

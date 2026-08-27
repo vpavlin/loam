@@ -21,6 +21,12 @@ class DeliveryBridgeModule(private val ctx: ReactApplicationContext) : ReactCont
     }
   }
 
+  // Called by the JS AFTER it has attached its `logosDeliveryRequest` listener (initServiceBridge).
+  // Only now is it safe to replay requests that were buffered while the node/JS was down (an app that
+  // bound & subscribed before Loam was running) — flushing in init() would emit into a listener that
+  // isn't registered yet and the events would be lost.
+  @ReactMethod fun jsReady() { DeliveryHub.flushPending() }
+
   @ReactMethod fun deliver(callerKey: String, topic: String, candidatesJson: String) =
     DeliveryHub.deliver(callerKey, topic, candidatesJson)
   @ReactMethod fun setMetrics(json: String) { DeliveryHub.metricsJson = json }
