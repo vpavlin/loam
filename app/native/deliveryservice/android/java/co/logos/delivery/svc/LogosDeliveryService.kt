@@ -10,7 +10,9 @@ import android.os.IBinder
 import android.util.Base64
 import co.logos.delivery.ILogosDelivery
 import co.logos.delivery.ILogosDeliveryCallback
+import java.io.File
 import java.security.MessageDigest
+import org.json.JSONArray
 
 // The IPC entry point other apps bind. It trusts NOTHING the caller says about its identity:
 // it resolves the calling package + signing cert from the binder UID itself, and keys the
@@ -18,6 +20,32 @@ import java.security.MessageDigest
 // ("Allow App X?"); grants are per (package + cert), so a repackaged/re-signed app is a new,
 // unapproved identity.
 class LogosDeliveryService : Service() {
+  // Prime the approved-apps set from the persisted grants BEFORE any JS runs. The JS's
+  // pushAuthorized() only fires once the RN context / UI is up (App.tsx preloadGrants), so a
+  // HEADLESS bind (an app reads metrics/registers while the Loam UI is closed, or after the
+  // process was killed) would otherwise see DeliveryHub.authorized empty -> return
+  // {authorized:false} for an ALREADY-APPROVED caller -> the client mislabels a not-yet-started
+  // node as "not approved" instead of "Loam isn't running". Reading the grants file here (the same
+  // file service-bridge.ts persists to expo-file-system documentDirectory == filesDir) makes an
+  // approved app recognized immediately. The JS remains the source of truth and re-pushes the set
+  // (approve/revoke) as soon as it runs; this is only the early prime.
+  override fun onCreate() {
+    super.onCreate()
+    try {
+      val f = File(filesDir, "logos-delivery-grants.json")
+      if (!f.exists()) return
+      val arr = JSONArray(f.readText())
+      val approved = HashSet<String>()
+      for (i in 0 until arr.length()) {
+        val g = arr.getJSONObject(i)
+        if (g.optBoolean("granted", false)) {
+          val ck = g.optString("callerKey", "")
+          if (ck.isNotEmpty()) approved.add(ck)
+        }
+      }
+      DeliveryHub.authorized = approved
+    } catch (_: Throwable) { /* best-effort; JS will push the authoritative set when it runs */ }
+  }
   private fun sha256(sig: Signature): String {
     val md = MessageDigest.getInstance("SHA-256")
     return Base64.encodeToString(md.digest(sig.toByteArray()), Base64.NO_WRAP)
