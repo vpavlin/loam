@@ -162,6 +162,16 @@ export function usingServiceBackend(): boolean { return backend instanceof Servi
 export function serviceNodeDown(): boolean { return backend instanceof ServiceNode ? backend.isNodeDown() : false; }
 export function serviceAwaitingApproval(): boolean { return backend instanceof ServiceNode ? backend.isAwaitingApproval() : false; }
 export function launchSharedService(): void { if (backend instanceof ServiceNode) backend.launchService(); }
+// The silent peer-drop: the shared node is bound, running and approved, but reports ZERO fleet
+// peers — so nothing syncs, yet serviceNodeDown()/serviceAwaitingApproval() are both false and the
+// old banner stayed quiet. counters.peers is -1 until the node reports metrics (then the real count,
+// 0 if none), so key on an explicit 0. Callers should refreshDebug() first so peers is current.
+export function serviceNoPeers(): boolean {
+  return backend instanceof ServiceNode
+    && !backend.isNodeDown()
+    && !backend.isAwaitingApproval()
+    && counters.peers === 0;
+}
 // Explicit "why isn't the shared node being used" diagnostic — surfaced in-app for debugging.
 let lastServiceError = "";
 export async function serviceDiag(): Promise<string> {
@@ -393,10 +403,12 @@ async function disarmMesh(): Promise<void> { const m = mesh; mesh = null; if (m)
 // subscribes the underlying node exactly once per topic (refcounted).
 export async function join(topics: string[]): Promise<void> {
   ensure();
-  // Subscribe when the node is Waku-ready OR the BLE mesh is armed. Otherwise, over a BLE-only
-  // (fleet-down) start, added topics never get owned by the broker and every incoming mesh frame
-  // on them is dropped as "foreign/unowned" (see SharedDeliveryNode._route).
-  if (!backend!.isReady() && !mesh) return;
+  // ALWAYS route through the tenant/broker — never drop a join because the node isn't ready yet.
+  // broker._subscribe records tenant OWNERSHIP synchronously (so an incoming frame on this topic
+  // is never "unowned"), and the underlying node.subscribe records the topic even before ready and
+  // re-subscribes it on `logosDeliveryConnected` (dbcf031). The old `if (!isReady() && !mesh)
+  // return` early-exit dropped a room joined during the shared-node bind window ENTIRELY — no
+  // record, no retry — so the app silently never received on it. That defeated dbcf031.
   for (const t of topics) if (!tenant!.topics.has(t)) await tenant!.subscribe(t);
 }
 
