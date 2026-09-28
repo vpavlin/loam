@@ -106,7 +106,8 @@
   .prose b{color:var(--ink);font-weight:600}
 
   /* ---- app grid (what grows here) ---- */
-  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:36px}
+  .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-top:36px}
+  @media(max-width:1000px){.cards{grid-template-columns:repeat(3,1fr)}}
   @media(max-width:860px){.cards{grid-template-columns:repeat(2,1fr)}}
   @media(max-width:440px){.cards{grid-template-columns:1fr}}
   .card{display:flex;flex-direction:column;gap:8px;padding:22px;background:var(--surface);
@@ -160,8 +161,9 @@
   .pr p{margin:0;color:var(--ink-soft);font-size:15px;line-height:1.55}
 
   /* ---- get started ---- */
-  .repos{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:32px}
-  @media(max-width:720px){.repos{grid-template-columns:1fr}}
+  .repos{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:32px}
+  @media(max-width:920px){.repos{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:520px){.repos{grid-template-columns:1fr}}
   .repo{display:flex;flex-direction:column;gap:6px;padding:20px;border:1px solid var(--line);
     border-radius:14px;background:var(--surface);text-decoration:none;color:inherit;transition:border-color .14s,transform .14s}
   .repo:hover{transform:translateY(-2px);border-color:color-mix(in oklab,var(--accent) 45%,var(--line))}
@@ -301,6 +303,12 @@
         <p>Secure CALendar — a shared calendar rebuilt on Logos; devices converge offline, each calendar signed by your own key (Keycard optional).</p>
         <span class="tag mono">calendar · has a site ↗</span>
       </a>
+      <a class="card" href="https://github.com/vpavlin/kith">
+        <img class="glyph" src="assets/kith.png" alt="Kith logo" width="46" height="46">
+        <h3>Kith</h3>
+        <p>A local-first address book. A contact can carry a Loam identity, so you can make them a Scala editor or a Qaku admin.</p>
+        <span class="tag mono">contacts · identity</span>
+      </a>
       <a class="card" href="https://github.com/vpavlin/qaku">
         <img class="glyph" src="assets/qaku.png" alt="Qaku logo" width="46" height="46">
         <h3>Qaku</h3>
@@ -329,7 +337,7 @@
         <div class="l-depth"><span class="l-mono">Topsoil</span><span class="num mono">01 · node</span></div>
         <div>
           <div class="l-name wm">loam <span class="k mono">xyz.vpavlin.loam</span></div>
-          <p class="l-desc">The device-wide shared delivery node. One shared Logos node per phone, shared by every Loam app behind a consent gate — so ten apps don’t each run ten radios. Also hosts the Bluetooth mesh for the whole device.</p>
+          <p class="l-desc">The device-wide shared delivery node. One shared Logos node per phone, shared by every Loam app behind a consent gate — so ten apps don’t each run ten radios. Also hosts the Bluetooth mesh for the whole device. On the desktop, the <span class="mono">loam_core</span> Basecamp module does the same job.</p>
         </div>
       </a>
       <a class="layer l2" role="listitem" href="https://github.com/vpavlin/loam-sync">
@@ -426,6 +434,10 @@
       <a class="repo" href="https://github.com/vpavlin/loam-sync">
         <span class="rn mono"><span class="slash">vpavlin/</span>loam-sync</span>
         <span class="rd">Event-log CRDT · HLC · set reconciliation.</span>
+      </a>
+      <a class="repo" href="https://github.com/vpavlin/loam-keycard">
+        <span class="rn mono"><span class="slash">vpavlin/</span>loam-keycard</span>
+        <span class="rd">A Status Keycard as your signing identity.</span>
       </a>
     </div>
     <div class="install">
