@@ -35,6 +35,9 @@ export default function App() {
   const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false, delivered: 0, dropped: 0, tx_t: [] as string[], own_t: [] as string[], del_t: [] as string[], drop_t: [] as string[] });
 
   useEffect(() => {
+    (globalThis as any).__loamMark = (m: string) => { try { (NativeModules as any).LoamMesh?.mark?.(m); } catch { /* */ } };
+    (globalThis as any).__loamMark("app start");
+    let beat = 0;
     (async () => {
       try { setCrash((await (NativeModules as any).LoamMesh?.lastCrash?.()) || ""); } catch { /* */ }
       try {
@@ -108,7 +111,9 @@ export default function App() {
       pushMetrics(c.peers, meshVal, bleNow);
       const d = t.meshRouteDiag?.() ?? { tx: [], owned: [], deliv: [], drop: [] };
       setBle({ ...bleNow, tx_t: d.tx, own_t: d.owned, del_t: d.deliv, drop_t: d.drop });
-      try { setRadio(await LoamMeshRadio.stats()); } catch { /* */ }
+      let r = "";
+      try { r = await LoamMeshRadio.stats(); setRadio(r); } catch { /* */ }
+      if (beat++ % 10 === 0) (globalThis as any).__loamMark?.(`beat peers=${c.peers} ble=${bleNow.armed ? bleNow.peers : "off"} tx=${c.bleTx} rx=${c.bleRx} | ${r.replace(/lastFrag=\S*/, "").slice(0, 110)}`);
       // telemetry self-drives inside the transport now — just read its status for the UI.
       try { setTele(transport.telemetryStatus()); } catch { /* */ }
     }, 3000);

@@ -81,6 +81,7 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
   emitter.addListener("logosDeliveryRequest", async (r: any) => {
     try {
       const ck = r.callerKey as string;
+      if (r.kind !== "send") { try { (globalThis as any).__loamMark?.(`client ${r.kind} ${String(r.label || r.appId || ck).slice(0, 16)}${r.topic ? " " + String(r.topic).slice(-12) : ""}`); } catch { /* */ } }
       if (r.kind === "register") {
         const client: Client = { callerKey: ck, appId: r.appId, pkg: r.pkg, cert: r.cert, label: r.label };
         if (grants.get(ck)?.granted) { activate(ck); return; }           // already approved

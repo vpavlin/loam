@@ -26,6 +26,9 @@ export interface RealNodeDeps {
   STORE_MAX_PAGES: number;
 }
 
+// Debug breadcrumb (Loam sets globalThis.__loamMark → a crash-surviving native trail file).
+const mark = (s: string) => { try { (globalThis as any).__loamMark?.(s); } catch { /* */ } };
+
 export class RealNode implements UnderlyingNode {
   private d: RealNodeDeps;
   private didSetup = false;
@@ -115,10 +118,13 @@ export class RealNode implements UnderlyingNode {
       if (!this.didSetup) { await LogosMessaging.setup(); this.didSetup = true; }
       const config = this.d.buildConfig();
       step("mode:" + (config && config.mode));
+      mark("node new mode=" + (config && config.mode));
       const c: string = await LogosMessaging.new(config);
+      mark("node new ok ctx=" + String(c).slice(-6));
       this.ctx = c;
       step("Joining mesh…");
       await LogosMessaging.start(c);
+      mark("node started");
       // Subscribe + channelCreate every topic BEFORE the settle, so the mesh forms with
       // the channel/subscription already wired in (KYM's order — the bit I'd gotten wrong).
       for (const t of initialTopics) await this.joinRoute(c, t);
@@ -192,6 +198,7 @@ export class RealNode implements UnderlyingNode {
     if (this.ready && LogosMessaging) {
       const c = this.ctx;
       this.ready = false;
+      mark("node stop");
       try { await LogosMessaging.stop(c); } catch { /* ignore */ }
     }
   }
@@ -199,6 +206,7 @@ export class RealNode implements UnderlyingNode {
   // KYM storeSync — cursor-paged history pull over EVERY joined topic. Hands each stored
   // message's candidates to the app (which opens+folds) and returns {msgs, events, detail}.
   async storeSync(onCandidates: (topic: string, candidates: Uint8Array[]) => boolean): Promise<{ msgs: number; events: number; detail: string }> {
+    mark(`storeSync topics=${this.joinedTopics.size}`);
     if (!this.ready || typeof LogosMessaging.storeQuery !== "function") {
       this.storeInfo = "store: bridge missing (rebuild app)";
       return { msgs: 0, events: 0, detail: this.storeInfo };
@@ -274,6 +282,7 @@ export class RealNode implements UnderlyingNode {
     if (this.reconnecting) return;
     this.reconnecting = true;
     const topics = [...this.joinedTopics];
+    mark(`reconnect (failedBefore=${this.reconnectFailed}) topics=${topics.length}`);
     try {
       try { if (this.ctx) await LogosMessaging.stop(this.ctx); } catch { /* already down */ }
       this.ready = false;
@@ -284,6 +293,7 @@ export class RealNode implements UnderlyingNode {
       // Leave not-ready; the watchdog retries (see peerWatchdog). Keep the topic list so the retry
       // (or a later start) re-joins everything, not just what the failed attempt got to.
       this.reconnectFailed = true;
+      mark("reconnect FAILED");
       for (const t of topics) this.joinedTopics.add(t);
     }
     finally { this.reconnecting = false; }
