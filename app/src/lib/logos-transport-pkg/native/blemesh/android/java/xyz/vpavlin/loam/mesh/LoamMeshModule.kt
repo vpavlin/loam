@@ -278,14 +278,27 @@ class LoamMeshModule(private val ctx: ReactApplicationContext) : ReactContextBas
     promise.resolve(sb.toString().take(16000))
   }
 
-  // Does Android see a network with VALIDATED internet? The node re-dial is skipped when not: dialing
-  // the fleet offline is pointless, and touching the node's networking offline has crashed it.
+  // Is there any network that claims internet? The node re-dial and renewal are skipped when not:
+  // dialing with no network is pointless, and touching the node's networking offline has crashed it.
+  // NOT "validated": Android leaves that false behind a Wi-Fi login page, on some VPNs and on mesh
+  // networks, where the fleet may well be reachable, and skipping renewal there silently stops receive.
   @ReactMethod fun online(promise: Promise) {
     try {
       val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
       val caps = cm.getNetworkCapabilities(cm.activeNetwork)
-      promise.resolve(caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true)
+      promise.resolve(caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true)
     } catch (_: Exception) { promise.resolve(true) }   // unknown: behave as before
+  }
+
+  // Restart the whole app process (e.g. to apply a node-mode change: the node is created once per process,
+  // and the foreground service keeps the process alive when the UI is swiped away). Relaunches the UI.
+  @ReactMethod fun restartApp() {
+    try {
+      val i = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return
+      i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
+      ctx.startActivity(i)
+    } catch (_: Exception) {}
+    Runtime.getRuntime().exit(0)
   }
 
   // Dismiss: hide everything up to now (exits are Android's record, so remember a timestamp).

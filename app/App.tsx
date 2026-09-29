@@ -32,7 +32,8 @@ export default function App() {
   const [net, setNet] = useState({ peers: -1, mesh: -1, rx: 0 });
   const [crash, setCrash] = useState("");
   const [crashCopied, setCrashCopied] = useState(false);   // last crash / recent process exits (LoamMesh.lastCrash)
-  const [radio, setRadio] = useState("");   // native BLE link stats (LoamMeshModule.stats)
+  const [radio, setRadio] = useState("");
+  const [runningMode, setRunningMode] = useState<Mode | null>(null);   // the mode the node was started with   // native BLE link stats (LoamMeshModule.stats)
   const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false, delivered: 0, dropped: 0, tx_t: [] as string[], own_t: [] as string[], del_t: [] as string[], drop_t: [] as string[] });
 
   useEffect(() => {
@@ -47,7 +48,7 @@ export default function App() {
         try { await preloadGrants(() => setTick((n) => n + 1)); } catch { /* */ }
         let m: Mode = "Edge";
         try { m = ((await SecureStore.getItemAsync("logos-delivery-nodemode")) as Mode) || "Edge"; } catch { /* */ }
-        setMode(m); transport.setNodeMode(m);
+        setMode(m); setRunningMode(m); transport.setNodeMode(m);
         try { await Notifications.requestPermissionsAsync(); } catch { /* */ }
         const deviceId = await getDeviceId();
         // EXPO_PUBLIC_MESH_WS_URL (a test/CI build flag) swaps the native GATT radio for a mock
@@ -215,8 +216,12 @@ export default function App() {
           {mode === "Edge"
             ? " (selected): light on battery & data — right for a phone on mobile or WiFi."
             : " (selected): relays the shard for the whole network — best on stable WiFi + power."}
-          {"  Relaunch to apply a change."}
         </Text>
+        {runningMode && mode !== runningMode ? (
+          <TouchableOpacity style={[s.btn, s.allow, { marginTop: 8, alignSelf: "flex-start" }]} onPress={() => { try { (NativeModules as any).LoamMesh?.restartApp?.(); } catch { /* */ } }}>
+            <Text style={[s.btnT, { color: "#14100C" }]}>Restart Loam to switch to {mode}</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* ── Bluetooth mesh (offline path) ───────────────────────────────── */}
