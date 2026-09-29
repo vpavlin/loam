@@ -162,6 +162,17 @@ export function usingServiceBackend(): boolean { return backend instanceof Servi
 export function serviceNodeDown(): boolean { return backend instanceof ServiceNode ? backend.isNodeDown() : false; }
 export function serviceAwaitingApproval(): boolean { return backend instanceof ServiceNode ? backend.isAwaitingApproval() : false; }
 export function launchSharedService(): void { if (backend instanceof ServiceNode) backend.launchService(); }
+// The silent peer-drop: the shared node is bound, running and approved, but reports ZERO fleet
+// peers — so nothing syncs, yet serviceNodeDown()/serviceAwaitingApproval() are both false and the
+// old banner stayed quiet. counters.peers is -1 until the node reports metrics (then the real count,
+// 0 if none), so key on an explicit 0. Callers should refreshDebug() first so peers is current.
+export function serviceNoPeers(): boolean {
+  return backend instanceof ServiceNode
+    && !backend.isNodeDown()
+    && !backend.isAwaitingApproval()
+    && counters.peers === 0
+    && !(backend.blePeers > 0);   // Bluetooth-only is connected: Loam's mesh carries the sync
+}
 // Explicit "why isn't the shared node being used" diagnostic — surfaced in-app for debugging.
 let lastServiceError = "";
 export async function serviceDiag(): Promise<string> {
@@ -210,6 +221,11 @@ export function setClientCache(appId: string, cacheLimit: number): void {
 export function clientCacheInfo(appId: string): { cacheLimit: number; buffered: number } {
   ensure(); const t = shared!.tenants.get(appId);
   return t ? { cacheLimit: t.cacheLimit, buffered: t.buffered() } : { cacheLimit: 0, buffered: 0 };
+}
+// Cold-start history pull for one tenant (the shared-node side of storeSync) — run the node's store
+// query and route each stored message back to this tenant through the normal receive path.
+export function clientStoreSync(appId: string): Promise<{ msgs: number; events: number; detail: string }> {
+  ensure(); return shared!.clientStoreSync(appId);
 }
 export function clientSubscribe(appId: string, topic: string): Promise<void> {
   ensure(); const t = shared!.tenants.get(appId); return t ? t.subscribe(topic) : Promise.resolve();
@@ -278,8 +294,14 @@ export async function publishSealed(topic: string, sealed: Uint8Array): Promise<
   // never floods its own writes onto BLE, and only online→offline propagates. The Waku
   // send stays AFTER and still throws on failure, so the caller's requeue-for-Waku logic
   // (retry when back online → the event still reaches the fleet/store) is preserved.
+  // meshOk only when a nearby peer actually got it: an armed mesh with nobody in range sends
+  // nothing, and treating that as delivered swallowed the Waku error below, so the app never
+  // re-queued a write that went nowhere.
   let meshOk = false;
-  if (mesh) { counters.bleTx++; noteTopic(meshTxTopics, topic); try { await mesh.send(makeFrame(topic, sealed)); meshOk = true; } catch { /* mesh is best-effort */ } }
+  if (mesh) {
+    counters.bleTx++; noteTopic(meshTxTopics, topic);
+    try { await mesh.send(makeFrame(topic, sealed)); meshOk = mesh.reachablePeers() > 0; } catch { /* mesh is best-effort */ }
+  }
   try {
     await backend!.send(topic, sealed);
   } catch (e) {
@@ -294,10 +316,10 @@ export async function publishSealed(topic: string, sealed: Uint8Array): Promise<
 // Fire-and-forget RAW publish — NO SDS reliable channel. For diagnostics/telemetry: a cold-joining
 // collector can never resolve SDS causal deps (channel sends pile up "missing dependencies" and never
 // deliver), and reliability/ordering are waste here anyway. Uses the backend's raw relay when it has one
-// (RealNode.sendRaw), and still floods the mesh. Best-effort; never throws.
+// (RealNode.sendRaw). Fleet only: diagnostics never ride the BLE mesh, where nearby phones would
+// relay them and count them as dropped (they own no telemetry topic). Best-effort; never throws.
 export async function publishRaw(topic: string, sealed: Uint8Array): Promise<void> {
   ensure();
-  if (mesh) { counters.bleTx++; noteTopic(meshTxTopics, topic); try { await mesh.send(makeFrame(topic, sealed)); } catch { /* */ } }
   const b = backend as any;
   try {
     if (b && typeof b.sendRaw === "function") await b.sendRaw(topic, sealed);
@@ -375,9 +397,21 @@ async function evaluateMesh(): Promise<void> {
   if (degraded && !mesh) await armMesh();
   else if (!degraded && mesh && !meshForced) await disarmMesh();
 }
+// A tick or a forceMesh() landing while `m.start()` is still awaiting would otherwise build a
+// second bearer + radio that nothing ever stops, delivering every frame twice.
+let arming: Promise<void> | null = null;
+// Bumped by every disarm: an arm whose radio start resolves AFTER a disarm must stop it, not install it
+// (else the radio runs forever with nothing that will ever stop it).
+let meshEpoch = 0;
 async function armMesh(): Promise<void> {
   if (mesh || !meshRadioFactory) return;
+  if (arming) return arming;
+  arming = armMeshNow().finally(() => { arming = null; });
+  return arming;
+}
+async function armMeshNow(): Promise<void> {
   ensure();
+  const epoch = meshEpoch;
   const m = new BleMeshBearer(meshRadioFactory(), meshOpts);
   m.onReceive((f) => {
     counters.rxRaw++; counters.bleRx++;
@@ -385,18 +419,24 @@ async function armMesh(): Promise<void> {
     if (opened) { counters.rxNew++; counters.bleRxDelivered++; noteTopic(meshRxDeliv, f.topic); }
     else { counters.rxDup++; counters.bleRxDropped++; noteTopic(meshRxDrop, f.topic); }
   });
-  try { await m.start(); mesh = m; } catch { /* radio not ready — retry next tick */ }
+  try {
+    await m.start();
+    if (epoch !== meshEpoch) { try { await m.stop(); } catch { /* */ } return; }   // disarmed meanwhile
+    mesh = m;
+  } catch { try { await m.stop(); } catch { /* */ } /* radio not ready — retry next tick */ }
 }
-async function disarmMesh(): Promise<void> { const m = mesh; mesh = null; if (m) { try { await m.stop(); } catch { /* */ } } }
+async function disarmMesh(): Promise<void> { meshEpoch++; const m = mesh; mesh = null; if (m) { try { await m.stop(); } catch { /* */ } } }
 
 // Add topics after the node is up — via the tenant so the broker records ownership and
 // subscribes the underlying node exactly once per topic (refcounted).
 export async function join(topics: string[]): Promise<void> {
   ensure();
-  // Subscribe when the node is Waku-ready OR the BLE mesh is armed. Otherwise, over a BLE-only
-  // (fleet-down) start, added topics never get owned by the broker and every incoming mesh frame
-  // on them is dropped as "foreign/unowned" (see SharedDeliveryNode._route).
-  if (!backend!.isReady() && !mesh) return;
+  // ALWAYS route through the tenant/broker — never drop a join because the node isn't ready yet.
+  // broker._subscribe records tenant OWNERSHIP synchronously (so an incoming frame on this topic
+  // is never "unowned"), and the underlying node.subscribe records the topic even before ready and
+  // re-subscribes it on `logosDeliveryConnected` (dbcf031). The old `if (!isReady() && !mesh)
+  // return` early-exit dropped a room joined during the shared-node bind window ENTIRELY — no
+  // record, no retry — so the app silently never received on it. That defeated dbcf031.
   for (const t of topics) if (!tenant!.topics.has(t)) await tenant!.subscribe(t);
 }
 

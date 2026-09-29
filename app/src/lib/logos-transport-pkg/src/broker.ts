@@ -17,6 +17,9 @@ export interface UnderlyingNode {
   // Register the single global receive stream; the broker demuxes it by content topic.
   onReceive(route: (topic: string, payload: any) => boolean): void;
   isReady(): boolean;
+  // Optional cold-start history pull (waku_store_query) over the joined topics. Present on the real
+  // node, absent on mocks/stubs. onCandidates(topic, candidates) is invoked per stored message.
+  storeSync?(onCandidates: (topic: string, candidates: Uint8Array[]) => boolean): Promise<{ msgs: number; events: number; detail: string }>;
 }
 
 export class SharedDeliveryNode {
@@ -46,17 +49,27 @@ export class SharedDeliveryNode {
 
   // ---- internal, called by Tenant ----
 
+  // Ownership is recorded BEFORE the node subscribe: a frame for this topic can arrive at any time
+  // (over the BLE mesh it needs no node subscription at all), and an owner-less topic drops it as
+  // "unowned". If the node subscribe fails (e.g. offline), the owner stays recorded and the next
+  // subscribe for the topic retries the node side.
+  private nodeSubPending = new Set<string>();
   async _subscribe(tenantId: string, topic: string): Promise<void> {
     let set = this.owners.get(topic);
-    if (!set) { set = new Set(); this.owners.set(topic, set); await this.node.subscribe(topic); }
+    const fresh = !set;
+    if (!set) { set = new Set(); this.owners.set(topic, set); }
     set.add(tenantId);
+    if (fresh || this.nodeSubPending.has(topic)) {
+      try { await this.node.subscribe(topic); this.nodeSubPending.delete(topic); }
+      catch (e) { this.nodeSubPending.add(topic); throw e; }
+    }
   }
 
   async _unsubscribe(tenantId: string, topic: string): Promise<void> {
     const set = this.owners.get(topic);
     if (!set) return;
     set.delete(tenantId);
-    if (set.size === 0) { this.owners.delete(topic); await this.node.unsubscribe(topic); }
+    if (set.size === 0) { this.owners.delete(topic); this.nodeSubPending.delete(topic); await this.node.unsubscribe(topic); }
   }
 
   // Record ownership of topics the node already joined during its bring-up (join-before-
@@ -72,6 +85,19 @@ export class SharedDeliveryNode {
   // The topics this device's broker currently routes (for diagnostics: does a BLE
   // frame's topic match anything an app subscribed?).
   ownedTopics(): string[] { return [...this.owners.keys()]; }
+
+  // Cold-start history for ONE tenant: run the node's store pull and route each stored message back
+  // through the normal receive path — the tenant folds it exactly like a live message, so no
+  // synchronous response channel is needed. No-op if the node has no store query (mock / not ready).
+  async clientStoreSync(tenantId: string): Promise<{ msgs: number; events: number; detail: string }> {
+    const t = this.tenants.get(tenantId);
+    if (!t) return { msgs: 0, events: 0, detail: "no such tenant" };
+    if (!this.node.storeSync) return { msgs: 0, events: 0, detail: "node has no store query" };
+    return this.node.storeSync((topic, candidates) => {
+      if (!this.owners.get(topic)?.has(tenantId)) return false; // only this tenant's topics
+      return t._deliver(topic, candidates as any);              // deliver like a live receive
+    });
+  }
 
   // Returns true iff some owning tenant opened (decrypted) the message.
   _route(topic: string, payload: any): boolean {

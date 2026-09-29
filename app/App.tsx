@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, NativeModules } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import * as Clipboard from "expo-clipboard";
@@ -30,16 +30,25 @@ export default function App() {
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
   // per-bearer live state
   const [net, setNet] = useState({ peers: -1, mesh: -1, rx: 0 });
+  const [crash, setCrash] = useState("");
+  const [crashCopied, setCrashCopied] = useState(false);   // last crash / recent process exits (LoamMesh.lastCrash)
+  const [radio, setRadio] = useState("");
+  const [runningMode, setRunningMode] = useState<Mode | null>(null);   // the mode the node was started with   // native BLE link stats (LoamMeshModule.stats)
   const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false, delivered: 0, dropped: 0, tx_t: [] as string[], own_t: [] as string[], del_t: [] as string[], drop_t: [] as string[] });
 
   useEffect(() => {
+    (globalThis as any).__loamMark = (m: string) => { try { (NativeModules as any).LoamMesh?.mark?.(m); } catch { /* */ } };
+    (globalThis as any).__loamMark("app start");
+    (globalThis as any).__loamOnline = async () => { try { return (await (NativeModules as any).LoamMesh?.online?.()) ?? true; } catch { return true; } };
+    let beat = 0;
     (async () => {
+      try { setCrash((await (NativeModules as any).LoamMesh?.lastCrash?.()) || ""); } catch { /* */ }
       try {
         // Paint the approved-apps list from disk FIRST — it's persisted and needs no node.
         try { await preloadGrants(() => setTick((n) => n + 1)); } catch { /* */ }
         let m: Mode = "Edge";
         try { m = ((await SecureStore.getItemAsync("logos-delivery-nodemode")) as Mode) || "Edge"; } catch { /* */ }
-        setMode(m); transport.setNodeMode(m);
+        setMode(m); setRunningMode(m); transport.setNodeMode(m);
         try { await Notifications.requestPermissionsAsync(); } catch { /* */ }
         const deviceId = await getDeviceId();
         // EXPO_PUBLIC_MESH_WS_URL (a test/CI build flag) swaps the native GATT radio for a mock
@@ -64,6 +73,10 @@ export default function App() {
         // the mesh when the fleet path drops — so EVERY bound app keeps syncing over Bluetooth.
         if (!meshWsUrl) {
           try { transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio(deviceId) : null); } catch { /* */ }
+          // Force mesh is a deliberate choice (e.g. a demo room): restore it, don't reset it on restart.
+          try {
+            if ((await SecureStore.getItemAsync("loam-mesh-forced")) === "1") { setMeshForced(true); transport.forceMesh(true); }
+          } catch { /* */ }
         }
         setFg("foreground service: " + (await startKeepAlive()));
         await initServiceBridge(() => setTick((n) => n + 1));
@@ -88,17 +101,22 @@ export default function App() {
       // Edge has no relay mesh by design (filter/lightpush) — report deliverable peers as "mesh".
       const meshVal = edge && c.peers > 0 ? c.peers : c.mesh;
       setNet({ peers: c.peers, mesh: meshVal, rx: c.rxRaw });
-      pushMetrics(c.peers, meshVal);   // expose to bound clients over AIDL
       const t = transport as any;
-      const d = t.meshRouteDiag?.() ?? { tx: [], owned: [], deliv: [], drop: [] };
-      setBle({
+      const bleNow = {
         armed: t.meshEnabled?.() ?? false,
         peers: t.meshPeers?.() ?? 0,
         tx: c.bleTx, rx: c.bleRx,
         forced: t.meshForcedOn?.() ?? false,
         delivered: c.bleRxDelivered ?? 0, dropped: c.bleRxDropped ?? 0,
-        tx_t: d.tx, own_t: d.owned, del_t: d.deliv, drop_t: d.drop,
-      });
+      };
+      // Expose to bound clients over AIDL, WITH the mesh state: a client runs no mesh itself, and
+      // without `ble` it saw mesh=0 over Bluetooth-only and showed every post as "queued".
+      pushMetrics(c.peers, meshVal, bleNow);
+      const d = t.meshRouteDiag?.() ?? { tx: [], owned: [], deliv: [], drop: [] };
+      setBle({ ...bleNow, tx_t: d.tx, own_t: d.owned, del_t: d.deliv, drop_t: d.drop });
+      let r = "";
+      try { r = await LoamMeshRadio.stats(); setRadio(r); } catch { /* */ }
+      if (beat++ % 10 === 0) (globalThis as any).__loamMark?.(`beat peers=${c.peers} ble=${bleNow.armed ? bleNow.peers : "off"} tx=${c.bleTx} rx=${c.bleRx} | ${r.replace(/lastFrag=\S*/, "").slice(0, 110)}`);
       // telemetry self-drives inside the transport now — just read its status for the UI.
       try { setTele(transport.telemetryStatus()); } catch { /* */ }
     }, 3000);
@@ -129,6 +147,26 @@ export default function App() {
       <Text style={s.title}>Loam</Text>
       <Text style={s.sub}>the soil your apps grow in</Text>
 
+      {/* Crash report (only after a real crash, until dismissed): scroll, long-press to select, or copy. */}
+      {crash ? (
+        <View style={s.bearer}>
+          <Text style={s.bName}>Last crash / recent exits</Text>
+          <ScrollView style={{ maxHeight: 260 }} nestedScrollEnabled>
+            <Text style={s.bStats} selectable>{crash}</Text>
+          </ScrollView>
+          <View style={{ flexDirection: "row", gap: 16, marginTop: 6 }}>
+            <TouchableOpacity onPress={async () => {
+              try { await Clipboard.setStringAsync(crash); setCrashCopied(true); setTimeout(() => setCrashCopied(false), 1500); } catch { /* */ }
+            }}>
+              <Text style={s.copyHint}>{crashCopied ? "copied ✓" : "⧉ copy"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={async () => { try { await (NativeModules as any).LoamMesh?.clearCrash?.(); } catch { /* */ } setCrash(""); }}>
+              <Text style={s.copyHint}>dismiss</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
       {/* overall — tap to copy a full stats dump (on-device bug reports without retyping) */}
       <TouchableOpacity style={s.statusRow} activeOpacity={0.6} onPress={async () => {
         const dump = [
@@ -141,6 +179,7 @@ export default function App() {
           `  tx:   ${ble.tx_t.join("  ") || "—"}`,
           `  del:  ${ble.del_t.join("  ") || "—"}`,
           `  drop: ${ble.drop_t.join("  ") || "—"}`,
+          `  radio: ${radio || "—"}`,
         ].join("\n");
         try { await Clipboard.setStringAsync(dump); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* */ }
       }}>
@@ -177,8 +216,12 @@ export default function App() {
           {mode === "Edge"
             ? " (selected): light on battery & data — right for a phone on mobile or WiFi."
             : " (selected): relays the shard for the whole network — best on stable WiFi + power."}
-          {"  Relaunch to apply a change."}
         </Text>
+        {runningMode && mode !== runningMode ? (
+          <TouchableOpacity style={[s.btn, s.allow, { marginTop: 8, alignSelf: "flex-start" }]} onPress={() => { try { (NativeModules as any).LoamMesh?.restartApp?.(); } catch { /* */ } }}>
+            <Text style={[s.btnT, { color: "#14100C" }]}>Restart Loam to switch to {mode}</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* ── Bluetooth mesh (offline path) ───────────────────────────────── */}
@@ -203,6 +246,7 @@ export default function App() {
             <Text style={[s.bStats, { color: C.inkFaint }]}>{`tx:   ${ble.tx_t.join("  ") || "—"}`}</Text>
             <Text style={[s.bStats, { color: C.green }]}>{`del:  ${ble.del_t.join("  ") || "—"}`}</Text>
             <Text style={[s.bStats, { color: C.clay }]}>{`drop: ${ble.drop_t.join("  ") || "—"}`}</Text>
+            <Text style={[s.bStats, { color: C.inkFaint }]} selectable>{`radio: ${radio || "—"}`}</Text>
           </View>
         ) : null}
         <View style={s.ctrlRow}>
@@ -210,7 +254,11 @@ export default function App() {
           <Switch
             value={meshForced}
             trackColor={{ true: "#4E8A3C", false: "#3A2E20" }}
-            onValueChange={(v) => { setMeshForced(v); try { (transport as any).forceMesh?.(v); } catch { /* */ } }}
+            onValueChange={(v) => {
+              setMeshForced(v);
+              try { (transport as any).forceMesh?.(v); } catch { /* */ }
+              SecureStore.setItemAsync("loam-mesh-forced", v ? "1" : "0").catch(() => { /* */ });
+            }}
           />
         </View>
         <Text style={s.why}>

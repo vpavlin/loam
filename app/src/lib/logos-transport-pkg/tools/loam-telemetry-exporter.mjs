@@ -27,24 +27,13 @@ const TOPIC = `/loam-telemetry/1/${hex(hmac(sha256, K, enc("loam-telemetry/topic
 
 if (process.argv.includes("--topic")) { console.log(TOPIC); process.exit(0); }
 
-function openSealed(sealed) {
-  if (sealed.length < 13) return null;
+function tryDecode(b64) {
   try {
+    const sealed = new Uint8Array(Buffer.from(b64, "base64"));
+    if (sealed.length < 13) return null;
     const pt = chacha20poly1305(Ke, sealed.subarray(0, 12), enc(TOPIC)).decrypt(sealed.subarray(12));
     const o = JSON.parse(new TextDecoder().decode(pt));
     return o && typeof o === "object" && o.dev ? o : null;
-  } catch { return null; }
-}
-// A collected token may be the sealed bytes b64'd once (mobile flush) or wrapped an extra base64 layer
-// (a bearer that re-encodes). Try both depths so the same exporter handles either.
-function tryDecode(b64) {
-  try {
-    const once = new Uint8Array(Buffer.from(b64, "base64"));
-    let o = openSealed(once);
-    if (o) return o;
-    // the once-decoded blob was itself a base64 string of the sealed bytes → decode again
-    try { const s = Buffer.from(once).toString("latin1"); if (/^[A-Za-z0-9+/=]+$/.test(s)) o = openSealed(new Uint8Array(Buffer.from(s, "base64"))); } catch { /* */ }
-    return o || null;
   } catch { return null; }
 }
 

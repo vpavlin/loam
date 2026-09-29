@@ -22,7 +22,10 @@ export class ServiceNode implements UnderlyingNode {
   private reconnectTimer: any = null;
   nodeDown = false;   // bound, but the service app's node/JS isn't running (no metrics)
   awaitingApproval = false;   // bound + node up, but this app hasn't been approved by the owner
+  private sawNodeUp = false;  // have we seen the shared node actually report health this session?
   readonly joinedTopics = new Set<string>();
+  // BLE mesh state proxied from the shared Loam node's metrics (see refreshPeerInfo).
+  blePeers = 0; bleArmed = false; bleForced = false;
   storeInfo = "store: via shared service";
 
   constructor(opts: { appId: string; counters?: any; diag?: any }) { this.appId = opts.appId; this.counters = opts.counters; this.diag = opts.diag; }
@@ -56,7 +59,9 @@ export class ServiceNode implements UnderlyingNode {
       if (this.reconnectTimer) { clearInterval(this.reconnectTimer); this.reconnectTimer = null; }
     });
     emitter.addListener("logosDeliveryDisconnected", () => {
-      this.ready = false;
+      // The service went away -> the shared node is DOWN. Show "Loam isn't running" (not a stale
+      // "not approved"), and forget we ever saw it up so a fresh bind re-evaluates from scratch.
+      this.ready = false; this.nodeDown = true; this.awaitingApproval = false; this.sawNodeUp = false;
       if (!this.reconnectTimer) this.reconnectTimer = setInterval(() => { try { Client.reconnect(); } catch { /* */ } }, 3000);
     });
   }
@@ -82,8 +87,14 @@ export class ServiceNode implements UnderlyingNode {
   }
 
   async subscribe(topic: string): Promise<void> {
-    if (!this.ready || this.joinedTopics.has(topic)) return;
-    await Client.subscribe(topic); this.joinedTopics.add(topic);
+    if (this.joinedTopics.has(topic)) return;
+    // Record the topic even BEFORE the shared node is ready, so the `logosDeliveryConnected`
+    // handler re-subscribes it on connect. The old `if (!this.ready) return` dropped an early
+    // subscribe AND never recorded it → an app that joined a room before its shared-node binding
+    // settled never registered that topic in the broker → its frames were silently dropped as
+    // "unowned" (the qaku-over-BLE "delivered:0" bug). Mirrors the RealNode.subscribe fix.
+    this.joinedTopics.add(topic);
+    if (this.ready) await Client.subscribe(topic);
   }
   async unsubscribe(_topic: string): Promise<void> { /* service-side; no per-topic unsub yet */ }
 
@@ -103,6 +114,16 @@ export class ServiceNode implements UnderlyingNode {
 
   // Store history + live peer metrics belong to the service's node; not proxied yet.
   async storeSync(_onCandidates: (t: string, c: Uint8Array[]) => boolean): Promise<{ msgs: number; events: number; detail: string }> {
+    // On the shared node the store pull runs in the Loam service (which owns the node with the store
+    // query). We just TRIGGER it over AIDL; the pulled messages come back through the normal receive
+    // callback (the service dispatches them to us like live messages), which the app already folds —
+    // so _onCandidates isn't used on this path. Requires a Loam service that handles requestStoreSync.
+    if (!Client || typeof Client.requestStoreSync !== "function") {
+      this.storeInfo = "store: shared node has no store proxy (update Loam)";
+      return { msgs: 0, events: 0, detail: this.storeInfo };
+    }
+    try { Client.requestStoreSync(); } catch { /* */ }
+    this.storeInfo = "store: requested via shared node (history arrives on receive)";
     return { msgs: 0, events: 0, detail: this.storeInfo };
   }
   // Pull the shared node's live peers/mesh over AIDL so the app's status + the
@@ -110,17 +131,43 @@ export class ServiceNode implements UnderlyingNode {
   // embedded node. The service stays a blind pipe — this is only node health.
   async refreshPeerInfo(): Promise<void> {
     if (!this.ready || !this.counters || typeof Client.metrics !== "function") return;
+    const wasUp = this.sawNodeUp && !this.nodeDown; // was the shared node reporting health before this poll?
     try {
       const m = JSON.parse(await Client.metrics());
-      if (m.authorized === false) {   // gated: not approved yet — reveal no health
+      if (m.authorized === false) {
+        // authorized:false is AMBIGUOUS. A genuinely-unapproved caller on a RUNNING node gets it,
+        // but so does a Loam that's bound yet whose node/JS hasn't primed the approved-apps list
+        // (a headless bind before the UI's preloadGrants ran also returns authorized:false). If we
+        // have NEVER seen this node actually report health this session, it's the latter -> show
+        // "Loam isn't running", not an approval problem. Only once we've seen the node up do we
+        // trust authorized:false as a real approval gate.
+        if (!this.sawNodeUp) { this.nodeDown = true; this.awaitingApproval = false;
+          this.counters.peers = -1; this.counters.mesh = -1; this.blePeers = 0; return; }
         this.awaitingApproval = true; this.nodeDown = false;
-        this.counters.peers = -1; this.counters.mesh = -1; return;
+        this.counters.peers = -1; this.counters.mesh = -1; this.blePeers = 0; return;
       }
       this.awaitingApproval = false;
       this.nodeDown = typeof m.peers !== "number";   // bound but node/JS not reporting
-      if (typeof m.peers === "number") this.counters.peers = m.peers;
+      if (typeof m.peers === "number") { this.counters.peers = m.peers; this.sawNodeUp = true; }
       if (typeof m.mesh === "number") this.counters.mesh = m.mesh;
-    } catch { this.nodeDown = true; }
+      // Proxy the shared node's BLE bearer (Loam >= 0.0.41 sends `ble`). A client runs no mesh of its
+      // own, so without this it saw peers 0 over Bluetooth-only and showed "Not connected to Loam"
+      // while Bluetooth was carrying its sync. A nearby BLE peer counts as reachability.
+      const ble = m.ble;
+      if (ble && typeof ble === "object") {
+        this.blePeers = ble.peers || 0; this.bleArmed = !!ble.armed; this.bleForced = !!ble.forced;
+        this.counters.bleTx = ble.tx || 0; this.counters.bleRx = ble.rx || 0;
+        this.counters.bleRxDelivered = ble.delivered || 0; this.counters.bleRxDropped = ble.dropped || 0;
+        if (this.blePeers > 0 && (this.counters.mesh || 0) <= 0) this.counters.mesh = this.blePeers;
+      } else { this.blePeers = 0; }
+      // Loam's NODE just came up (e.g. Loam started AFTER Scala bound the AIDL service). The service
+      // stayed bound the whole time, so `logosDeliveryConnected` never fired and our topic subscribes —
+      // sent while the node was down — never reached a running node. Re-apply them now, or the app is
+      // "connected" but the node relays nothing → no sync. Mirrors the reconnect handler.
+      if (!this.nodeDown && !wasUp) {
+        for (const t of this.joinedTopics) { try { await Client.subscribe(t); } catch { /* */ } }
+      }
+    } catch { this.nodeDown = true; this.blePeers = 0; }
   }
   isAwaitingApproval(): boolean { return this.awaitingApproval; }
   async stop(): Promise<void> { this.ready = false; try { await Client.disconnect?.(); } catch { /* */ } }
