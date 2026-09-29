@@ -30,6 +30,7 @@ export default function App() {
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
   // per-bearer live state
   const [net, setNet] = useState({ peers: -1, mesh: -1, rx: 0 });
+  const [radio, setRadio] = useState("");   // native BLE link stats (LoamMeshModule.stats)
   const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false, delivered: 0, dropped: 0, tx_t: [] as string[], own_t: [] as string[], del_t: [] as string[], drop_t: [] as string[] });
 
   useEffect(() => {
@@ -105,6 +106,7 @@ export default function App() {
       pushMetrics(c.peers, meshVal, bleNow);
       const d = t.meshRouteDiag?.() ?? { tx: [], owned: [], deliv: [], drop: [] };
       setBle({ ...bleNow, tx_t: d.tx, own_t: d.owned, del_t: d.deliv, drop_t: d.drop });
+      try { setRadio(await LoamMeshRadio.stats()); } catch { /* */ }
       // telemetry self-drives inside the transport now — just read its status for the UI.
       try { setTele(transport.telemetryStatus()); } catch { /* */ }
     }, 3000);
@@ -147,6 +149,7 @@ export default function App() {
           `  tx:   ${ble.tx_t.join("  ") || "—"}`,
           `  del:  ${ble.del_t.join("  ") || "—"}`,
           `  drop: ${ble.drop_t.join("  ") || "—"}`,
+          `  radio: ${radio || "—"}`,
         ].join("\n");
         try { await Clipboard.setStringAsync(dump); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* */ }
       }}>
@@ -209,6 +212,7 @@ export default function App() {
             <Text style={[s.bStats, { color: C.inkFaint }]}>{`tx:   ${ble.tx_t.join("  ") || "—"}`}</Text>
             <Text style={[s.bStats, { color: C.green }]}>{`del:  ${ble.del_t.join("  ") || "—"}`}</Text>
             <Text style={[s.bStats, { color: C.clay }]}>{`drop: ${ble.drop_t.join("  ") || "—"}`}</Text>
+            <Text style={[s.bStats, { color: C.inkFaint }]} selectable>{`radio: ${radio || "—"}`}</Text>
           </View>
         ) : null}
         <View style={s.ctrlRow}>
