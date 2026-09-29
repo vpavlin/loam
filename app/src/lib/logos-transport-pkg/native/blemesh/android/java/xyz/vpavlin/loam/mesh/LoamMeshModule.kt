@@ -256,6 +256,16 @@ class LoamMeshModule(private val ctx: ReactApplicationContext) : ReactContextBas
     promise.resolve(if (out.length > 14000) out.takeLast(14000) else out)
   }
 
+  // Does Android see a network with VALIDATED internet? The node re-dial is skipped when not: dialing
+  // the fleet offline is pointless, and touching the node's networking offline has crashed it.
+  @ReactMethod fun online(promise: Promise) {
+    try {
+      val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+      val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+      promise.resolve(caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true)
+    } catch (_: Exception) { promise.resolve(true) }   // unknown: behave as before
+  }
+
   @ReactMethod fun clearCrash(promise: Promise) {
     try { java.io.File(ctx.filesDir, "loam-last-crash.txt").delete() } catch (_: Exception) {}
     promise.resolve(true)

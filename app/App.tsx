@@ -38,6 +38,7 @@ export default function App() {
   useEffect(() => {
     (globalThis as any).__loamMark = (m: string) => { try { (NativeModules as any).LoamMesh?.mark?.(m); } catch { /* */ } };
     (globalThis as any).__loamMark("app start");
+    (globalThis as any).__loamOnline = async () => { try { return await (NativeModules as any).LoamMesh?.online?.(); } catch { return true; } };
     let beat = 0;
     (async () => {
       try { setCrash((await (NativeModules as any).LoamMesh?.lastCrash?.()) || ""); } catch { /* */ }
