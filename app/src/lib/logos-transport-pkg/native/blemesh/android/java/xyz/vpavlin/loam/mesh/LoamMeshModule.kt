@@ -245,6 +245,10 @@ class LoamMeshModule(private val ctx: ReactApplicationContext) : ReactContextBas
       }
     } catch (e: Exception) { sb.append("exit info unavailable: ${e.message}\n") }
     try {
+      val e = java.io.File(ctx.filesDir, "loam-stderr-prev.txt")
+      if (e.exists() && e.length() > 0) sb.append("previous run, native stderr (last 40 lines):\n").append(e.readText().lines().takeLast(40).joinToString("\n")).append("\n")
+    } catch (_: Exception) {}
+    try {
       val f = java.io.File(ctx.filesDir, "loam-trail-prev.txt")
       if (f.exists()) sb.append("previous run, last steps:\n").append(f.readText().lines().takeLast(40).joinToString("\n")).append("\n")
     } catch (_: Exception) {}

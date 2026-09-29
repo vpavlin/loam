@@ -30,7 +30,8 @@ export default function App() {
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
   // per-bearer live state
   const [net, setNet] = useState({ peers: -1, mesh: -1, rx: 0 });
-  const [crash, setCrash] = useState("");   // last crash / recent process exits (LoamMesh.lastCrash)
+  const [crash, setCrash] = useState("");
+  const [crashCopied, setCrashCopied] = useState(false);   // last crash / recent process exits (LoamMesh.lastCrash)
   const [radio, setRadio] = useState("");   // native BLE link stats (LoamMeshModule.stats)
   const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false, delivered: 0, dropped: 0, tx_t: [] as string[], own_t: [] as string[], del_t: [] as string[], drop_t: [] as string[] });
 
@@ -150,9 +151,16 @@ export default function App() {
         <View style={s.bearer}>
           <Text style={s.bName}>Last crash / recent exits</Text>
           <TextInput style={[s.bStats, { maxHeight: 260 }]} value={crash} multiline editable={false} scrollEnabled />
-          <TouchableOpacity onPress={async () => { try { await (NativeModules as any).LoamMesh?.clearCrash?.(); } catch { /* */ } setCrash(""); }}>
-            <Text style={s.copyHint}>dismiss</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", gap: 16, marginTop: 6 }}>
+            <TouchableOpacity onPress={async () => {
+              try { await Clipboard.setStringAsync(crash); setCrashCopied(true); setTimeout(() => setCrashCopied(false), 1500); } catch { /* */ }
+            }}>
+              <Text style={s.copyHint}>{crashCopied ? "copied ✓" : "⧉ copy"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={async () => { try { await (NativeModules as any).LoamMesh?.clearCrash?.(); } catch { /* */ } setCrash(""); }}>
+              <Text style={s.copyHint}>dismiss</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : null}
 

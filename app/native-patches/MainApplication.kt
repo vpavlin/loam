@@ -16,6 +16,7 @@ import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
 
 class MainApplication : Application(), ReactApplication {
+  private var stderrKeep: java.io.FileOutputStream? = null   // keeps the fd-2 target open for the process
 
   override val reactNativeHost: ReactNativeHost = ReactNativeHostWrapper(
         this,
@@ -44,6 +45,15 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    // Native stderr (fd 2) goes nowhere on Android. The Nim node's SIGSEGV handler prints its reason +
+    // traceback there before dying, so point fd 2 at a file (previous run's kept as -prev for the report).
+    try {
+      val f = java.io.File(filesDir, "loam-stderr.txt")
+      if (f.exists() && f.length() > 0) f.renameTo(java.io.File(filesDir, "loam-stderr-prev.txt"))
+      val out = java.io.FileOutputStream(java.io.File(filesDir, "loam-stderr.txt"))
+      android.system.Os.dup2(out.fd, 2)
+      stderrKeep = out
+    } catch (_: Throwable) {}
     // Record any uncaught JVM/JS crash to a file so the next launch can show it (no adb needed).
     val prev = Thread.getDefaultUncaughtExceptionHandler()
     Thread.setDefaultUncaughtExceptionHandler { t, e ->
