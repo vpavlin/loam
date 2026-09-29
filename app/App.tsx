@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, NativeModules } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import * as Clipboard from "expo-clipboard";
@@ -30,11 +30,13 @@ export default function App() {
   const [tick, setTick] = useState(0);   // bump to re-read consent lists
   // per-bearer live state
   const [net, setNet] = useState({ peers: -1, mesh: -1, rx: 0 });
+  const [crash, setCrash] = useState("");   // last crash / recent process exits (LoamMesh.lastCrash)
   const [radio, setRadio] = useState("");   // native BLE link stats (LoamMeshModule.stats)
   const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false, delivered: 0, dropped: 0, tx_t: [] as string[], own_t: [] as string[], del_t: [] as string[], drop_t: [] as string[] });
 
   useEffect(() => {
     (async () => {
+      try { setCrash((await (NativeModules as any).LoamMesh?.lastCrash?.()) || ""); } catch { /* */ }
       try {
         // Paint the approved-apps list from disk FIRST — it's persisted and needs no node.
         try { await preloadGrants(() => setTick((n) => n + 1)); } catch { /* */ }
@@ -136,6 +138,18 @@ export default function App() {
     <ScrollView style={s.scroll} contentContainerStyle={s.c}>
       <Text style={s.title}>Loam</Text>
       <Text style={s.sub}>the soil your apps grow in</Text>
+
+      {/* Crash report from the previous run: long-press to select + copy (no clipboard call, so it
+          works even when copying is what crashed). */}
+      {crash ? (
+        <View style={s.bearer}>
+          <Text style={s.bName}>Last crash / recent exits</Text>
+          <TextInput style={[s.bStats, { maxHeight: 260 }]} value={crash} multiline editable={false} scrollEnabled />
+          <TouchableOpacity onPress={async () => { try { await (NativeModules as any).LoamMesh?.clearCrash?.(); } catch { /* */ } setCrash(""); }}>
+            <Text style={s.copyHint}>dismiss</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {/* overall — tap to copy a full stats dump (on-device bug reports without retyping) */}
       <TouchableOpacity style={s.statusRow} activeOpacity={0.6} onPress={async () => {
