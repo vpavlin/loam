@@ -64,6 +64,10 @@ export default function App() {
         // the mesh when the fleet path drops — so EVERY bound app keeps syncing over Bluetooth.
         if (!meshWsUrl) {
           try { transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio(deviceId) : null); } catch { /* */ }
+          // Force mesh is a deliberate choice (e.g. a demo room): restore it, don't reset it on restart.
+          try {
+            if ((await SecureStore.getItemAsync("loam-mesh-forced")) === "1") { setMeshForced(true); transport.forceMesh(true); }
+          } catch { /* */ }
         }
         setFg("foreground service: " + (await startKeepAlive()));
         await initServiceBridge(() => setTick((n) => n + 1));
@@ -88,17 +92,19 @@ export default function App() {
       // Edge has no relay mesh by design (filter/lightpush) — report deliverable peers as "mesh".
       const meshVal = edge && c.peers > 0 ? c.peers : c.mesh;
       setNet({ peers: c.peers, mesh: meshVal, rx: c.rxRaw });
-      pushMetrics(c.peers, meshVal);   // expose to bound clients over AIDL
       const t = transport as any;
-      const d = t.meshRouteDiag?.() ?? { tx: [], owned: [], deliv: [], drop: [] };
-      setBle({
+      const bleNow = {
         armed: t.meshEnabled?.() ?? false,
         peers: t.meshPeers?.() ?? 0,
         tx: c.bleTx, rx: c.bleRx,
         forced: t.meshForcedOn?.() ?? false,
         delivered: c.bleRxDelivered ?? 0, dropped: c.bleRxDropped ?? 0,
-        tx_t: d.tx, own_t: d.owned, del_t: d.deliv, drop_t: d.drop,
-      });
+      };
+      // Expose to bound clients over AIDL, WITH the mesh state: a client runs no mesh itself, and
+      // without `ble` it saw mesh=0 over Bluetooth-only and showed every post as "queued".
+      pushMetrics(c.peers, meshVal, bleNow);
+      const d = t.meshRouteDiag?.() ?? { tx: [], owned: [], deliv: [], drop: [] };
+      setBle({ ...bleNow, tx_t: d.tx, own_t: d.owned, del_t: d.deliv, drop_t: d.drop });
       // telemetry self-drives inside the transport now — just read its status for the UI.
       try { setTele(transport.telemetryStatus()); } catch { /* */ }
     }, 3000);
@@ -210,7 +216,11 @@ export default function App() {
           <Switch
             value={meshForced}
             trackColor={{ true: "#4E8A3C", false: "#3A2E20" }}
-            onValueChange={(v) => { setMeshForced(v); try { (transport as any).forceMesh?.(v); } catch { /* */ } }}
+            onValueChange={(v) => {
+              setMeshForced(v);
+              try { (transport as any).forceMesh?.(v); } catch { /* */ }
+              SecureStore.setItemAsync("loam-mesh-forced", v ? "1" : "0").catch(() => { /* */ });
+            }}
           />
         </View>
         <Text style={s.why}>
