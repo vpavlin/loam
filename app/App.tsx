@@ -38,7 +38,7 @@ export default function App() {
   useEffect(() => {
     (globalThis as any).__loamMark = (m: string) => { try { (NativeModules as any).LoamMesh?.mark?.(m); } catch { /* */ } };
     (globalThis as any).__loamMark("app start");
-    (globalThis as any).__loamOnline = async () => { try { return await (NativeModules as any).LoamMesh?.online?.(); } catch { return true; } };
+    (globalThis as any).__loamOnline = async () => { try { return (await (NativeModules as any).LoamMesh?.online?.()) ?? true; } catch { return true; } };
     let beat = 0;
     (async () => {
       try { setCrash((await (NativeModules as any).LoamMesh?.lastCrash?.()) || ""); } catch { /* */ }
@@ -146,12 +146,13 @@ export default function App() {
       <Text style={s.title}>Loam</Text>
       <Text style={s.sub}>the soil your apps grow in</Text>
 
-      {/* Crash report from the previous run: long-press to select + copy (no clipboard call, so it
-          works even when copying is what crashed). */}
+      {/* Crash report (only after a real crash, until dismissed): scroll, long-press to select, or copy. */}
       {crash ? (
         <View style={s.bearer}>
           <Text style={s.bName}>Last crash / recent exits</Text>
-          <TextInput style={[s.bStats, { maxHeight: 260 }]} value={crash} multiline editable={false} scrollEnabled />
+          <ScrollView style={{ maxHeight: 260 }} nestedScrollEnabled>
+            <Text style={s.bStats} selectable>{crash}</Text>
+          </ScrollView>
           <View style={{ flexDirection: "row", gap: 16, marginTop: 6 }}>
             <TouchableOpacity onPress={async () => {
               try { await Clipboard.setStringAsync(crash); setCrashCopied(true); setTimeout(() => setCrashCopied(false), 1500); } catch { /* */ }

@@ -32,6 +32,7 @@
       ],
       "./plugins/withForegroundService.js",
       "./plugins/withDeliveryService.js",
+      "./plugins/withCrashRecorder.js",
       "./src/lib/logos-transport-pkg/plugins/withLoamMesh"
     ],
     "extra": {
