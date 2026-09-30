@@ -6,10 +6,19 @@ import android.content.pm.PackageManager
 import android.content.pm.Signature
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Base64
+import android.util.Log
 import co.logos.delivery.ILogosDelivery
 import co.logos.delivery.ILogosDeliveryCallback
+import com.facebook.react.ReactApplication
+import com.facebook.react.ReactInstanceEventListener
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.ReactContext
+import com.facebook.react.jstasks.HeadlessJsTaskConfig
+import com.facebook.react.jstasks.HeadlessJsTaskContext
 import java.io.File
 import java.security.MessageDigest
 import org.json.JSONArray
@@ -21,7 +30,7 @@ import org.json.JSONArray
 // unapproved identity.
 class LogosDeliveryService : Service() {
   // Prime the approved-apps set from the persisted grants BEFORE any JS runs. The JS's
-  // pushAuthorized() only fires once the RN context / UI is up (App.tsx preloadGrants), so a
+  // pushAuthorized() only fires once the RN context is up (boot.ts preloadGrants), so a
   // HEADLESS bind (an app reads metrics/registers while the Loam UI is closed, or after the
   // process was killed) would otherwise see DeliveryHub.authorized empty -> return
   // {authorized:false} for an ALREADY-APPROVED caller -> the client mislabels a not-yet-started
@@ -31,6 +40,10 @@ class LogosDeliveryService : Service() {
   // (approve/revoke) as soon as it runs; this is only the early prime.
   override fun onCreate() {
     super.onCreate()
+    primeGrants()
+    ensureJs()
+  }
+  private fun primeGrants() {
     try {
       val f = File(filesDir, "logos-delivery-grants.json")
       if (!f.exists()) return
@@ -45,6 +58,48 @@ class LogosDeliveryService : Service() {
       }
       DeliveryHub.authorized = approved
     } catch (_: Throwable) { /* best-effort; JS will push the authoritative set when it runs */ }
+  }
+
+  // HEADLESS BOOT. The node lives in JS (src/lib/boot.ts, run from index.js at bundle load), so a
+  // bind that (re)creates Loam's process — after a crash / OS kill / Loam never opened — must start
+  // the React context itself, or client requests just queue in DeliveryHub until someone opens the
+  // UI. Old architecture: ReactInstanceManager. Once the context is up, start the long-lived
+  // BOOT_TASK: with no resumed Activity RN pauses JS timers unless a HeadlessJS task is active, and
+  // the node start / metrics loop need them. Main thread (RIM + HeadlessJsTaskContext assert it).
+  private fun ensureJs() {
+    Handler(Looper.getMainLooper()).post {
+      try {
+        val rim = (application as ReactApplication).reactNativeHost.reactInstanceManager
+        val ctx = rim.currentReactContext
+        if (ctx != null) { startBootTask(ctx); return@post }
+        rim.addReactInstanceEventListener(object : ReactInstanceEventListener {
+          override fun onReactContextInitialized(context: ReactContext) {
+            rim.removeReactInstanceEventListener(this)
+            startBootTask(context)
+          }
+        })
+        if (!rim.hasStartedCreatingInitialContext()) {
+          Log.i(TAG, "service: starting JS (headless)")
+          rim.createReactContextInBackground()
+        }
+      } catch (t: Throwable) { Log.w(TAG, "service: could not start JS", t) }
+    }
+  }
+  private fun startBootTask(ctx: ReactContext) {
+    // Once per React context (the service can be re-created in the same process). Harmless with the
+    // UI open: allowedInForeground=true, and boot() is idempotent JS-side.
+    val id = System.identityHashCode(ctx)
+    if (bootTaskCtx == id) return
+    bootTaskCtx = id
+    try {
+      HeadlessJsTaskContext.getInstance(ctx).startTask(HeadlessJsTaskConfig(BOOT_TASK, Arguments.createMap(), 0, true))
+      Log.i(TAG, "service: boot task started")
+    } catch (t: Throwable) { Log.w(TAG, "service: boot task failed", t) }
+  }
+  companion object {
+    private const val TAG = "LOAMBOOT"
+    private const val BOOT_TASK = "LoamBoot"   // == BOOT_TASK in src/lib/boot.ts
+    @Volatile private var bootTaskCtx = 0
   }
   private fun sha256(sig: Signature): String {
     val md = MessageDigest.getInstance("SHA-256")
