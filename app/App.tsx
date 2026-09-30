@@ -3,143 +3,44 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import * as Clipboard from "expo-clipboard";
-import * as transport from "./src/lib/logos-transport";
-import { getDeviceId } from "./src/lib/device";
-import { LoamMeshRadio } from "./src/lib/logos-transport-pkg/native/blemesh/loam-mesh-radio";
-import { WsMeshRadio } from "./src/lib/logos-transport-pkg/src/ws-mesh-radio";
-import { startKeepAlive } from "./src/lib/keepalive";
-import { preloadGrants, initServiceBridge, serviceBridgeAvailable, lists, approve, deny, revoke, setCache, pushMetrics, Client } from "./src/lib/service-bridge";
+import { serviceBridgeAvailable, lists, approve, deny, revoke, setCache, Client } from "./src/lib/service-bridge";
+import { getBootState, onBootState, uiAttached, setMeshForced, setTelemetrySecret, setTelemetryEnabled, dismissCrash, Mode } from "./src/lib/boot";
 
 // The device-wide shared delivery node runs ONE Loam node in a foreground service; other apps
 // bind over AIDL and — once YOU approve them — sync through it. This screen presents the node as
 // what it is: a TRANSPORT with several bearers. Each bearer is a card (live stats + its control +
 // when/why you'd use it). Matches the desktop loam_ui panel.
-const PROBE_TOPIC = "/logos-delivery/1/probe/proto";
-type Mode = "Core" | "Edge";
+// The node itself is brought up by src/lib/boot.ts (from index.js, UI or not) — this is a pure
+// view over its state plus the user's actions.
 const shortCert = (c: string) => (c ? c.slice(0, 10) + "…" : "?");
 
 export default function App() {
-  const [status, setStatus] = useState("starting…");
+  const [st, setSt] = useState(getBootState());
   const [copied, setCopied] = useState(false);
-  const [fg, setFg] = useState("foreground service: …");
-  const [tele, setTele] = useState<{ enabled: boolean; buffered?: number; lastFlush?: string }>({ enabled: false });
-  const [teleSecret, setTeleSecret] = useState("");   // the telemetry secret — persisted, kept even when off
-  const [teleOn, setTeleOn] = useState(false);        // explicit enable toggle — persisted separately
-  const [meshForced, setMeshForced] = useState(false);
-  const [mode, setMode] = useState<Mode>("Core");
-  const [tick, setTick] = useState(0);   // bump to re-read consent lists
-  // per-bearer live state
-  const [net, setNet] = useState({ peers: -1, mesh: -1, rx: 0 });
-  const [crash, setCrash] = useState("");
-  const [crashCopied, setCrashCopied] = useState(false);   // last crash / recent process exits (LoamMesh.lastCrash)
-  const [radio, setRadio] = useState("");
-  const [runningMode, setRunningMode] = useState<Mode | null>(null);   // the mode the node was started with   // native BLE link stats (LoamMeshModule.stats)
-  const [ble, setBle] = useState({ armed: false, peers: 0, tx: 0, rx: 0, forced: false, delivered: 0, dropped: 0, tx_t: [] as string[], own_t: [] as string[], del_t: [] as string[], drop_t: [] as string[] });
+  const [crashCopied, setCrashCopied] = useState(false);
+  const [picked, setPicked] = useState<Mode | null>(null);          // the user's pick (null = what's persisted)
+  const [secretDraft, setSecretDraft] = useState<string | null>(null);   // telemetry secret being edited
 
   useEffect(() => {
-    (globalThis as any).__loamMark = (m: string) => { try { (NativeModules as any).LoamMesh?.mark?.(m); } catch { /* */ } };
-    (globalThis as any).__loamMark("app start");
-    (globalThis as any).__loamOnline = async () => { try { return (await (NativeModules as any).LoamMesh?.online?.()) ?? true; } catch { return true; } };
-    let beat = 0;
-    (async () => {
-      try { setCrash((await (NativeModules as any).LoamMesh?.lastCrash?.()) || ""); } catch { /* */ }
-      try {
-        // Paint the approved-apps list from disk FIRST — it's persisted and needs no node.
-        try { await preloadGrants(() => setTick((n) => n + 1)); } catch { /* */ }
-        let m: Mode = "Edge";
-        try { m = ((await SecureStore.getItemAsync("logos-delivery-nodemode")) as Mode) || "Edge"; } catch { /* */ }
-        setMode(m); setRunningMode(m); transport.setNodeMode(m);
-        try { await Notifications.requestPermissionsAsync(); } catch { /* */ }
-        const deviceId = await getDeviceId();
-        // EXPO_PUBLIC_MESH_WS_URL (a test/CI build flag) swaps the native GATT radio for a mock
-        // WebSocket radio pointed at test/tools/mesh-relay.js — two nodes then mesh with no Bluetooth,
-        // so bearer switching is provable headlessly. Unset in prod → real BLE (registered after start).
-        const meshWsUrl = process.env.EXPO_PUBLIC_MESH_WS_URL;
-        if (meshWsUrl) {
-          // TEST BUILD: arm the mock mesh + heartbeat BEFORE start. The mesh bearer is independent of
-          // the Waku node (which never settles on an x86_64 emulator — no native delivery lib), so the
-          // whole transport (broker route, fan-out, dedup) is exercised over the mock radio regardless.
-          try { transport.setMeshRadio(() => new WsMeshRadio(deviceId, meshWsUrl)); transport.forceMesh(true); } catch { /* */ }
-          try { transport.join([PROBE_TOPIC]); } catch { /* */ }  // own the probe topic so received frames route (delivered, not "unowned")
-          let hb = 0;
-          setInterval(() => { try { transport.publishSealed(PROBE_TOPIC, new TextEncoder().encode("hb:" + deviceId + ":" + hb++)); } catch { /* */ } }, 4000);
-        }
-        // Don't let a node-start failure skip the service bridge + keepalive below. On an x86_64
-        // emulator start throws (no native Waku lib), but the mesh + AIDL approval flow must still run.
-        try {
-          await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => !!meshWsUrl, onStatus: setStatus });
-        } catch (e: any) { setStatus("node start failed (mesh/AIDL still up): " + String((e && e.message) || e)); }
-        // Device-wide BLE offline mesh (ADR 0012): register the radio once; the transport auto-arms
-        // the mesh when the fleet path drops — so EVERY bound app keeps syncing over Bluetooth.
-        if (!meshWsUrl) {
-          try { transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio(deviceId) : null); } catch { /* */ }
-          // Force mesh is a deliberate choice (e.g. a demo room): restore it, don't reset it on restart.
-          try {
-            if ((await SecureStore.getItemAsync("loam-mesh-forced")) === "1") { setMeshForced(true); transport.forceMesh(true); }
-          } catch { /* */ }
-        }
-        setFg("foreground service: " + (await startKeepAlive()));
-        await initServiceBridge(() => setTick((n) => n + 1));
-        // Offline-first telemetry is a transport FEATURE: the node buffers its own diagnostics offline +
-        // flushes to a sealed topic when the fleet returns. Configured at RUNTIME (persisted secret, set
-        // in the UI below) with a build-time EXPO_PUBLIC_TELEMETRY_SECRET fallback. Empty = off.
-        try {
-          let sec = "";
-          try { sec = (await SecureStore.getItemAsync("loam-telemetry-secret")) || ""; } catch { /* */ }
-          if (!sec) sec = process.env.EXPO_PUBLIC_TELEMETRY_SECRET || "";
-          let on = false;
-          try { on = (await SecureStore.getItemAsync("loam-telemetry-enabled")) === "1"; } catch { /* */ }
-          setTeleSecret(sec); setTeleOn(on);
-          if (on && sec) await transport.enableTelemetry(sec);   // enabled only when explicitly toggled on
-        } catch { /* */ }
-      } catch (e: any) { setStatus("error: " + String((e && e.message) || e)); }
-    })();
-    const iv = setInterval(async () => {
-      try { await transport.refreshPeerInfo(); } catch { /* */ }
-      const c = transport.counters;
-      const edge = transport.getNodeMode() === "Edge";
-      // Edge has no relay mesh by design (filter/lightpush) — report deliverable peers as "mesh".
-      const meshVal = edge && c.peers > 0 ? c.peers : c.mesh;
-      setNet({ peers: c.peers, mesh: meshVal, rx: c.rxRaw });
-      const t = transport as any;
-      const bleNow = {
-        armed: t.meshEnabled?.() ?? false,
-        peers: t.meshPeers?.() ?? 0,
-        tx: c.bleTx, rx: c.bleRx,
-        forced: t.meshForcedOn?.() ?? false,
-        delivered: c.bleRxDelivered ?? 0, dropped: c.bleRxDropped ?? 0,
-      };
-      // Expose to bound clients over AIDL, WITH the mesh state: a client runs no mesh itself, and
-      // without `ble` it saw mesh=0 over Bluetooth-only and showed every post as "queued".
-      pushMetrics(c.peers, meshVal, bleNow);
-      const d = t.meshRouteDiag?.() ?? { tx: [], owned: [], deliv: [], drop: [] };
-      setBle({ ...bleNow, tx_t: d.tx, own_t: d.owned, del_t: d.deliv, drop_t: d.drop });
-      let r = "";
-      try { r = await LoamMeshRadio.stats(); setRadio(r); } catch { /* */ }
-      if (beat++ % 10 === 0) (globalThis as any).__loamMark?.(`beat peers=${c.peers} ble=${bleNow.armed ? bleNow.peers : "off"} tx=${c.bleTx} rx=${c.bleRx} | ${r.replace(/lastFrag=\S*/, "").slice(0, 110)}`);
-      // telemetry self-drives inside the transport now — just read its status for the UI.
-      try { setTele(transport.telemetryStatus()); } catch { /* */ }
-    }, 3000);
-    return () => clearInterval(iv);
+    const off = onBootState(setSt);
+    setSt(getBootState());
+    const detach = uiAttached();
+    // Needs a visible Activity — so it's asked here, never from the headless boot.
+    Notifications.requestPermissionsAsync().catch(() => { /* */ });
+    return () => { off(); detach(); };
   }, []);
 
-  const pick = async (m: Mode) => { try { await SecureStore.setItemAsync("logos-delivery-nodemode", m); } catch { /* */ } setMode(m); };
+  const { status, fg, net, ble, radio, crash, tele, meshForced, teleOn } = st;
+  const runningMode = st.nodeMode;   // the mode the node was started with
+  const mode: Mode = picked ?? runningMode ?? "Core";
+  const teleSecret = secretDraft ?? st.teleSecret;
+
+  const pick = async (m: Mode) => { try { await SecureStore.setItemAsync("logos-delivery-nodemode", m); } catch { /* */ } setPicked(m); };
   const { pending, granted } = serviceBridgeAvailable() ? lists() : { pending: [] as Client[], granted: [] as any[] };
   const netUp = net.peers > 0;
-  // Runtime telemetry config: persist the secret and (re)start telemetry on it; empty secret = off.
-  // Persist the secret (kept even when telemetry is off, so it survives updates + toggling); if
-  // telemetry is currently on, reconfigure it onto the new secret.
-  const saveSecret = async (secret: string) => {
-    setTeleSecret(secret);
-    try { await SecureStore.setItemAsync("loam-telemetry-secret", secret); } catch { /* */ }
-    if (teleOn && secret) { try { await transport.enableTelemetry(secret); } catch { /* */ } }
-  };
-  // Explicit enable/disable. Turning off keeps the secret. Turning on needs a secret set.
-  const toggleTelemetry = async (on: boolean) => {
-    setTeleOn(on);
-    try { await SecureStore.setItemAsync("loam-telemetry-enabled", on ? "1" : "0"); } catch { /* */ }
-    try { await transport.enableTelemetry(on ? teleSecret : ""); } catch { /* */ }
-  };
+  // Runtime telemetry config: persist the secret and (re)start telemetry on it (see boot.ts).
+  const saveSecret = (secret: string) => { setSecretDraft(secret); void setTelemetrySecret(secret); };
+  const toggleTelemetry = (on: boolean) => { void setTelemetryEnabled(on, teleSecret); };
   const bleColor = ble.armed ? (ble.peers > 0 ? C.green : C.amber) : C.inkFaint;
 
   return (
@@ -160,7 +61,7 @@ export default function App() {
             }}>
               <Text style={s.copyHint}>{crashCopied ? "copied ✓" : "⧉ copy"}</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={async () => { try { await (NativeModules as any).LoamMesh?.clearCrash?.(); } catch { /* */ } setCrash(""); }}>
+            <TouchableOpacity onPress={() => { void dismissCrash(); }}>
               <Text style={s.copyHint}>dismiss</Text>
             </TouchableOpacity>
           </View>
@@ -254,11 +155,7 @@ export default function App() {
           <Switch
             value={meshForced}
             trackColor={{ true: "#4E8A3C", false: "#3A2E20" }}
-            onValueChange={(v) => {
-              setMeshForced(v);
-              try { (transport as any).forceMesh?.(v); } catch { /* */ }
-              SecureStore.setItemAsync("loam-mesh-forced", v ? "1" : "0").catch(() => { /* */ });
-            }}
+            onValueChange={setMeshForced}
           />
         </View>
         <Text style={s.why}>
@@ -302,7 +199,7 @@ export default function App() {
           <TextInput
             style={s.teleInput}
             value={teleSecret}
-            onChangeText={setTeleSecret}
+            onChangeText={setSecretDraft}
             onSubmitEditing={() => saveSecret(teleSecret)}
             placeholder="shared telemetry secret"
             placeholderTextColor={C.inkFaint}
