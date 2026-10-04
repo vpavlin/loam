@@ -272,6 +272,9 @@
   .ops .inl{background:var(--ground)}
   .prose a,.ops a,.col a:not(.btn),.st a,.steps a{color:var(--accent-ink)}
   .repos{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+  .cards{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:860px){.cards{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:440px){.cards{grid-template-columns:1fr}}
   .foot2{display:flex;gap:6px 22px;flex-wrap:wrap;margin-top:16px}
 </style>
 </head>
@@ -507,6 +510,12 @@
         <p>A local-first address book. A contact can carry a Loam identity; linking it into Scala and QAKU is planned.</p>
         <span class="tag mono">contacts · website ↗</span>
       </a>
+      <a class="card" href="https://github.com/vpavlin/whisperbox-logos">
+        <img class="glyph" src="assets/whisperbox.png" alt="WhisperBox logo" width="46" height="46">
+        <h3>WhisperBox</h3>
+        <p>Encrypted forms: answers sealed to the form's creator.</p>
+        <span class="tag mono">forms · source ↗</span>
+      </a>
     </div>
   </div>
 </section>
@@ -522,7 +531,7 @@
         <ol>
           <li>In F-Droid, add the repo below (tap the link on your phone, or scan the code).</li>
           <li>Install <b>Loam</b>.</li>
-          <li>Install your apps (Scala, QAKU, KYM, Perun, Kith) from the same repo.</li>
+          <li>Install your apps (Scala, QAKU, KYM, Perun, Kith, WhisperBox) from the same repo.</li>
         </ol>
         <div class="qrrow">
           <img src="assets/fdroid-qr.svg" alt="QR code that adds the apps.vpavlin.xyz F-Droid repository" width="150" height="150">
@@ -536,7 +545,7 @@
         <h3>loam_core comes with your apps</h3>
         <ol>
           <li>In Basecamp, add this under package repositories:<code class="fpurl mono wrapit" style="margin-top:8px">https://apps.vpavlin.xyz/logos-repo.json</code></li>
-          <li>Install an app's view package, for example <b>scala_ui</b>, <b>qaku</b>, <b>kym</b>, <b>perun_analytics</b> or <b>kith_ui</b>.</li>
+          <li>Install an app's view package, for example <b>scala_ui</b>, <b>qaku</b>, <b>kym</b>, <b>perun_analytics</b>, <b>kith_ui</b> or <b>whisperbox</b>.</li>
           <li>That pulls in the app's core and <b>loam_core</b> automatically. There is nothing to install for Loam by hand.</li>
         </ol>
         <p class="note">A desktop Loam panel (<span class="inl">loam_ui</span>) showing node status and controls is coming; it isn't public yet. Basecamp 0.3 support is coming.</p>
@@ -634,6 +643,7 @@
       <a href="https://github.com/vpavlin/kym">KYM</a>
       <a href="https://vpavlin.github.io/perun/">Perun</a>
       <a href="https://vpavlin.github.io/kith/">Kith</a>
+      <a href="https://github.com/vpavlin/whisperbox-logos">WhisperBox</a>
     </div>
   </div>
 </footer>
