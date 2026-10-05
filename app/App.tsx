@@ -4,6 +4,7 @@ import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import * as Clipboard from "expo-clipboard";
 import { serviceBridgeAvailable, lists, approve, deny, revoke, setCache, Client } from "./src/lib/service-bridge";
+import { IdentityCard } from "./src/components/IdentityCard";
 import { getBootState, onBootState, uiAttached, setMeshForced, setTelemetrySecret, setTelemetryEnabled, dismissCrash, Mode } from "./src/lib/boot";
 
 // The device-wide shared delivery node runs ONE Loam node in a foreground service; other apps
@@ -88,6 +89,9 @@ export default function App() {
         <Text style={s.status}>{status}</Text>
         <Text style={s.copyHint}>{copied ? "  copied ✓" : "  ⧉ copy"}</Text>
       </TouchableOpacity>
+
+      <Text style={s.label}>IDENTITY</Text>
+      <IdentityCard />
 
       <Text style={s.label}>BEARERS</Text>
 

@@ -12,6 +12,8 @@
     "@noble/ciphers": "^1.0.0",
     "@noble/curves": "^1.8.1",
     "@noble/hashes": "^1.4.0",
+    "@scure/bip32": "^1.7.0",
+    "@scure/bip39": "^1.6.0",
     "base64-js": "^1.5.1",
     "expo": "~51.0.0",
     "expo-camera": "~15.0.16",

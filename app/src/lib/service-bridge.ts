@@ -3,6 +3,7 @@ import { fromByteArray, toByteArray } from "base64-js";
 import * as FileSystem from "expo-file-system";
 import * as Notifications from "expo-notifications";
 import * as transport from "./logos-transport";
+import { hdHandle } from "./hd-root";
 
 // The consent-gated IPC bridge. Apps bind the AIDL service and are identified by their
 // VERIFIED signing cert + package (callerKey, resolved natively). The device owner approves
@@ -83,7 +84,7 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
       const ck = r.callerKey as string;
       // Breadcrumb for client requests. Not send (too frequent) and not touch (every metrics poll of an
       // unapproved app: noise that pushed the useful lines out of the trail).
-      if (r.kind !== "send" && r.kind !== "touch") { try { (globalThis as any).__loamMark?.(`client ${r.kind} ${String(r.label || r.appId || ck).slice(0, 16)}${r.topic ? " " + String(r.topic).slice(-12) : ""}`); } catch { /* */ } }
+      if (r.kind !== "send" && r.kind !== "touch" && r.kind !== "hd") { try { (globalThis as any).__loamMark?.(`client ${r.kind} ${String(r.label || r.appId || ck).slice(0, 16)}${r.topic ? " " + String(r.topic).slice(-12) : ""}`); } catch { /* */ } }
       if (r.kind === "register") {
         const client: Client = { callerKey: ck, appId: r.appId, pkg: r.pkg, cert: r.cert, label: r.label };
         if (grants.get(ck)?.granted) { activate(ck); return; }           // already approved
@@ -109,6 +110,13 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
         // Cold-start history pull for this client: run the node's store query and route each stored
         // message back to the client through the normal receive callback (folded like a live msg).
         if (active.has(ck)) await transport.clientStoreSync(ck);
+      } else if (r.kind === "hd") {
+        // HD identity request (ADR 0001). Only approved apps, and ONLY in the app namespace recorded when
+        // the owner approved them — a client can't ask for another app's identities by naming its appId.
+        const g = grants.get(ck);
+        const reply = (j: unknown) => { try { Bridge.hdReply(r.reqId, JSON.stringify(j)); } catch { /* */ } };
+        if (!g?.granted) { reply({ error: "not approved" }); return; }
+        reply(await hdHandle(g.appId || g.pkg, r.request || "{}"));
       } else if (r.kind === "touch") {
         if (!grants.get(ck)?.granted && !pending.has(ck)) {
           pending.set(ck, { callerKey: ck, appId: r.appId || "", pkg: r.pkg, cert: r.cert, label: r.label });

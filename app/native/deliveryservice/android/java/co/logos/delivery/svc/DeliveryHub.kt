@@ -50,6 +50,22 @@ object DeliveryHub {
     dispatch("unregister", mapOf("callerKey" to callerKey))
   }
 
+  // HD identity requests: a reply comes back from the JS (hdReply) and is matched by reqId. Buffered like
+  // other requests while the JS is down; a request nobody answers is dropped after 60 s.
+  private val hdPending = ConcurrentHashMap<String, Pair<co.logos.delivery.IHdCallback, Long>>()
+  private val hdSeq = java.util.concurrent.atomic.AtomicLong(0)
+  fun hdCall(callerKey: String, requestJson: String, cb: co.logos.delivery.IHdCallback) {
+    val now = System.currentTimeMillis()
+    hdPending.entries.removeIf { now - it.value.second > 60_000 }
+    val id = "hd" + hdSeq.incrementAndGet()
+    hdPending[id] = cb to now
+    dispatch("hd", mapOf("callerKey" to callerKey, "reqId" to id, "request" to requestJson))
+  }
+  fun hdReply(reqId: String, resultJson: String) {
+    val p = hdPending.remove(reqId) ?: return
+    try { p.first.onResult(resultJson) } catch (_: Throwable) { /* client died */ }
+  }
+
   fun deliver(callerKey: String, topic: String, candidatesJson: String) {
     try { callbacks[callerKey]?.onMessage(topic, candidatesJson) } catch (_: Throwable) { /* client died */ }
   }
