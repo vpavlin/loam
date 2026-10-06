@@ -1,7 +1,7 @@
 import { NativeModules, Platform, PermissionsAndroid } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import * as transport from "./logos-transport";
-import { getDeviceId } from "./device";
+import { getDeviceId, getSenderSecret } from "./device";
 import { LoamMeshRadio } from "./logos-transport-pkg/native/blemesh/loam-mesh-radio";
 import { WsMeshRadio } from "./logos-transport-pkg/src/ws-mesh-radio";
 import { startKeepAlive } from "./keepalive";
@@ -159,6 +159,7 @@ async function run(): Promise<void> {
     try { m = ((await SecureStore.getItemAsync("logos-delivery-nodemode")) as Mode) || "Edge"; } catch { /* */ }
     set({ nodeMode: m }); transport.setNodeMode(m);
     const deviceId = await getDeviceId();
+    const senderSecret = await getSenderSecret();
     // EXPO_PUBLIC_MESH_WS_URL (a test/CI build flag) swaps the native GATT radio for a mock
     // WebSocket radio pointed at test/tools/mesh-relay.js — two nodes then mesh with no Bluetooth,
     // so bearer switching is provable headlessly. Unset in prod → real BLE (registered after start).
@@ -180,7 +181,7 @@ async function run(): Promise<void> {
     // Don't let a node-start failure skip the service bridge below. On an x86_64 emulator start
     // throws (no native Waku lib), but the mesh + AIDL approval flow must still run.
     try {
-      await transport.start({ deviceId, topics: [PROBE_TOPIC], onReceive: () => !!meshWsUrl, onStatus: (s) => set({ status: s }) });
+      await transport.start({ deviceId, senderSecret, topics: [PROBE_TOPIC], onReceive: () => !!meshWsUrl, onStatus: (s) => set({ status: s }) });
     } catch (e: any) { set({ status: "node start failed (mesh/AIDL still up): " + String((e && e.message) || e) }); }
     // Device-wide BLE offline mesh (ADR 0012): register the radio once; the transport auto-arms
     // the mesh when the fleet path drops — so EVERY bound app keeps syncing over Bluetooth.
