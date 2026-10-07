@@ -30,6 +30,7 @@ class DeliveryBridgeModule(private val ctx: ReactApplicationContext) : ReactCont
   @ReactMethod fun deliver(callerKey: String, topic: String, candidatesJson: String) =
     DeliveryHub.deliver(callerKey, topic, candidatesJson)
   @ReactMethod fun setMetrics(json: String) { DeliveryHub.metricsJson = json }
+  @ReactMethod fun hdReply(reqId: String, resultJson: String) = DeliveryHub.hdReply(reqId, resultJson)
   @ReactMethod fun setAuthorized(jsonArray: String) {
     val set = HashSet<String>()
     try { val a = org.json.JSONArray(jsonArray); for (i in 0 until a.length()) set.add(a.getString(i)) } catch (_: Throwable) {}

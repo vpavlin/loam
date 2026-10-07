@@ -139,6 +139,15 @@ class LogosDeliveryService : Service() {
       DeliveryHub.send(key(caller()), topic, Base64.encodeToString(sealed, Base64.NO_WRAP))
     override fun requestStoreSync(appId: String) = DeliveryHub.requestStoreSync(key(caller()))
     override fun unregisterClient(appId: String) = DeliveryHub.unregister(key(caller()))
+    override fun hdCall(appId: String, requestJson: String, cb: co.logos.delivery.IHdCallback) {
+      val c = caller(); val ck = key(c)
+      if (!DeliveryHub.isAuthorized(ck)) {
+        DeliveryHub.touch(ck, c.pkg, c.cert, c.label)
+        try { cb.onResult("{\"error\":\"not approved\"}") } catch (_: Throwable) {}
+        return
+      }
+      DeliveryHub.hdCall(ck, requestJson, cb)
+    }
     override fun metrics(): String {
       val c = caller(); val ck = key(c)
       if (DeliveryHub.isAuthorized(ck)) return DeliveryHub.metricsJson
