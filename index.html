@@ -541,14 +541,14 @@
         <p class="note">Loam is recommended: one shared node for all your apps, plus Bluetooth. Without it, each app runs its own node.</p>
       </div>
       <div class="col">
-        <p class="plat">Desktop · Basecamp 0.2.x</p>
+        <p class="plat">Desktop · Basecamp 0.3</p>
         <h3>loam_core comes with your apps</h3>
         <ol>
           <li>In Basecamp, add this under package repositories:<code class="fpurl mono wrapit" style="margin-top:8px">https://apps.vpavlin.xyz/logos-repo.json</code></li>
           <li>Install an app's view package, for example <b>scala_ui</b>, <b>qaku</b>, <b>kym</b>, <b>perun_analytics</b>, <b>kith_ui</b> or <b>whisperbox</b>.</li>
           <li>That pulls in the app's core and <b>loam_core</b> automatically. There is nothing to install for Loam by hand.</li>
         </ol>
-        <p class="note">A desktop Loam panel (<span class="inl">loam_ui</span>) showing node status and controls is coming; it isn't public yet. Basecamp 0.3 support is coming.</p>
+        <p class="note">The desktop Loam panel (<span class="inl">loam_ui</span>) shows node status and controls.</p>
       </div>
     </div>
   </div>
@@ -574,7 +574,7 @@
     <h2 class="section-head" style="font-size:clamp(28px,4vw,40px);font-weight:600;margin-top:12px">What's solid, and what's still growing.</h2>
     <div class="status">
       <div class="st"><span class="k ok">Works</span><span>The <b>shared node</b> on Android, <b>per-app approval</b>, and the <b>offline cache</b>. The cache lives in memory, so it is lost if Loam itself restarts; apps then catch up over the network as usual.</span></div>
-      <div class="st"><span class="k ok">Works</span><span><b>Basecamp 0.2.x</b> with <span class="inl">loam_core</span>, pulled in by each app. Basecamp 0.3 support is coming.</span></div>
+      <div class="st"><span class="k ok">Works</span><span><b>Basecamp 0.3</b> (Linux x64, Linux ARM64 and macOS) with <span class="inl">loam_core</span>, pulled in by each app.</span></div>
       <div class="st"><span class="k exp">Experimental</span><span><b>Bluetooth mesh</b>, Android only. Desktop Bluetooth doesn't work yet.</span></div>
       <div class="st"><span class="k exp">Experimental</span><span><b>Keycard</b> signing. Not verified end to end yet.</span></div>
       <div class="st"><span class="k next">Coming</span><span><b>Message budget (RLN).</b> The Logos network is adding spam protection that gives each node a limited message rate, shared by all apps on it. Loam will manage that budget for your apps.</span></div>
