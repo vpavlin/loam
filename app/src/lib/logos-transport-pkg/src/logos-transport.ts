@@ -6,6 +6,7 @@
 // Swapping RealNode for a device-wide shared-delivery service later is the only change.
 // The proven bring-up (join-before-settle), the listener, storeSync and the double-base64
 // send were moved into RealNode VERBATIM — see real-node.ts. This file is the public shim.
+import { Receivers } from "./receivers";
 import { fromByteArray, toByteArray } from "base64-js";
 import { sha256 as sha256hash } from "@noble/hashes/sha2.js";
 import { utf8Bytes as utf8, utf8Decode as fromUtf8 } from "./utf8";
@@ -14,6 +15,7 @@ import { RealNode } from "./real-node";
 import { ServiceNode } from "./service-node";
 import { BleMeshBearer, makeFrame } from "./bearer";
 import type { MeshRadio } from "./bearer";
+import { withUnwrappedSegments } from "./segment-compat";
 
 // Per-stage diagnostic counters (surface in a Sync card). rxOpened/rxOpenFail are the
 // app's open() outcome, reported back via onReceive's return value.
@@ -105,7 +107,9 @@ export function payloadCandidates(payload: any): Uint8Array[] {
       try { out.push(toByteArray(fromUtf8(once))); } catch { /* not double */ }
     } catch { /* not base64 */ }
   }
-  return out;
+  // A desktop on delivery >= 0.3.0 (lib v0.39) wraps channel content in a LIP-243 SegmentMessage that
+  // our v0.38.1 library passes through: offer the unwrapped payload (and its base64 decodings) too.
+  return withUnwrappedSegments(out);
 }
 
 // ---- the one node, behind the broker seam ----
@@ -113,7 +117,7 @@ export function payloadCandidates(payload: any): Uint8Array[] {
 // default, or ServiceNode (bind the device-wide shared service over AIDL) when a client app
 // opts in via preferServiceBackend() and the client native module is present. A single-app
 // consumer uses start()/join()/publishSealed(); the SERVICE uses registerClient() per tenant.
-let onReceiveCb: OnReceive | null = null;
+const receivers = new Receivers();
 let preferService = false;
 let clientAppId = "app";
 let started = false;
@@ -142,7 +146,7 @@ function wire(b: RealNode | ServiceNode) {
   shared = new SharedDeliveryNode(backend);
   // the app's single tenant opens (decrypts) via onReceive and reports back.
   tenant = shared.registerTenant("app").onMessage(
-    (topic: string, cands: Uint8Array[]) => (onReceiveCb ? onReceiveCb(topic, cands) : false),
+    (topic: string, cands: Uint8Array[]) => receivers.dispatch(topic, cands),
   );
 }
 function ensure() {
@@ -175,6 +179,30 @@ export function serviceNoPeers(): boolean {
 }
 // Explicit "why isn't the shared node being used" diagnostic — surfaced in-app for debugging.
 let lastServiceError = "";
+// ---- identities held by Loam (loam-keycard ADR 0001) ----
+// One root in the Loam app → a separate identity per space (calendar, room, book…) plus one shared
+// "main" identity (contextId ""). Loam scopes every request to THIS app, so apps can't reach each
+// other's identities. Each returns {error} when there is no shared Loam node (the app runs its own
+// node or Loam is older) — callers then keep using their own local key.
+export type LoamIdentity = { address: string; pubHex: string; path: string };
+async function hd(req: object): Promise<any> {
+  ensure();
+  if (!(backend instanceof ServiceNode)) return { error: "no shared Loam node" };
+  return backend.hdCall(req);
+}
+/** {exists, mainAddress?, mainPubHex?} — whether the user has set up an identity in Loam. */
+export function loamIdentityStatus(): Promise<{ exists?: boolean; mainAddress?: string; mainPubHex?: string; error?: string }> {
+  return hd({ op: "status" });
+}
+/** The identity for a space (contextId), or the main identity for "". */
+export function loamIdentity(contextId: string): Promise<LoamIdentity | { error: string }> {
+  return hd({ op: "identity", contextId });
+}
+/** Sign a 32-byte hex digest → {sig: 64-byte r||s hex (low-S), pub, address}. */
+export function loamSign(contextId: string, digestHex: string): Promise<{ sig: string; pub: string; address: string } | { error: string }> {
+  return hd({ op: "sign", contextId, digestHex });
+}
+
 export async function serviceDiag(): Promise<string> {
   const avail = ServiceNode.available();
   const usingSvc = backend instanceof ServiceNode;
@@ -243,11 +271,22 @@ export function unregisterClient(appId: string, opts?: { hard?: boolean }): Prom
 // Bring the node up (or, if up, join new topics), then record topic ownership so the
 // broker routes those topics to this app's tenant.
 let deviceId = "";   // remembered so the telemetry feature can stamp snapshots without app plumbing
-export async function start(opts: { deviceId: string; topics: string[]; onReceive: OnReceive; onStatus?: OnStatus }): Promise<void> {
-  onReceiveCb = opts.onReceive;
+// senderSecret: a random per-install secret that keys the per-topic SDS sender ids (ADR 0022). Pass
+// one; without it the deviceId keys them.
+export async function start(opts: { deviceId: string; senderSecret?: string; topics: string[]; onReceive: OnReceive; onStatus?: OnStatus }): Promise<void> {
+  receivers.add(opts.onReceive);
+  // A second engine in the same app (see ./receivers.ts): the node is up or coming up, so only add its topics.
+  if (starting) { try { await starting; } catch { /* the first start's error is its caller's */ } }
+  if (running) { await join(opts.topics); return; }
+  starting = startOnce(opts);
+  try { await starting; } finally { starting = null; }
+}
+let starting: Promise<void> | null = null;
+let running = false;   // up and not stopped: a later start() only joins; after stop() it starts again
+async function startOnce(opts: { deviceId: string; senderSecret?: string; topics: string[]; onStatus?: OnStatus }): Promise<void> {
   deviceId = opts.deviceId;
   ensure();
-  backend!.setDeviceId(opts.deviceId);
+  backend!.setDeviceId(opts.deviceId, opts.senderSecret);
   try {
     await backend!.start(opts.topics, opts.onStatus);
   } catch (e) {
@@ -257,12 +296,12 @@ export async function start(opts: { deviceId: string; topics: string[]; onReceiv
       lastServiceError = "start fell back: " + String((e as any)?.message || e);
       try { opts.onStatus && opts.onStatus("Shared node unavailable — using own node"); } catch { /* */ }
       wire(makeReal());
-      backend!.setDeviceId(opts.deviceId);
+      backend!.setDeviceId(opts.deviceId, opts.senderSecret);
       await backend!.start(opts.topics, opts.onStatus);
     } else { throw e; }
   }
   shared!._adopt("app", opts.topics);   // the single tenant owns the initial topics (no reliance on join())
-  started = true;                        // lock the backend choice; preferServiceBackend re-wires only pre-start
+  started = true; running = true;        // lock the backend choice; preferServiceBackend re-wires only pre-start
 }
 
 // ---- telemetry (offline-buffered node diagnostics) — a transport FEATURE, see ./telemetry.ts ----
@@ -442,10 +481,13 @@ export async function join(topics: string[]): Promise<void> {
   for (const t of topics) if (!tenant!.topics.has(t)) await tenant!.subscribe(t);
 }
 
-export async function stop(): Promise<void> { if (backend) await backend.stop(); }
+export async function stop(): Promise<void> { running = false; if (backend) await backend.stop(); }
 
 export function storeSync(onCandidates: (topic: string, candidates: Uint8Array[]) => boolean) {
   ensure(); return backend!.storeSync(onCandidates);
 }
 
 export function refreshPeerInfo(): Promise<void> { ensure(); return backend!.refreshPeerInfo(); }
+
+// Per-topic plain relay instead of SDS channels (relay-topics.ts): Scala by default.
+export { setTopicMode, isRelayTopic } from "./relay-topics";
