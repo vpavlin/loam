@@ -68,8 +68,12 @@ function activate(callerKey: string) {
   active.add(callerKey);
   // Approved apps get offline caching (ADR 0011): while the app is unbound the
   // node keeps its subscription and buffers (opaque) messages, drained on rebind.
-  transport.registerClient(callerKey, (topic, cands) => {
-    Bridge.deliver(callerKey, topic, JSON.stringify(cands.map((c: Uint8Array) => fromByteArray(c))));
+  transport.registerClient(callerKey, (topic, cands, meta) => {
+    const candidatesJson = JSON.stringify(cands.map((c: Uint8Array) => fromByteArray(c)));
+    // The network timestamp (ns) + source, for clients that asked for them (DeliveryHub decides).
+    if (meta && typeof Bridge.deliverMeta === "function")
+      Bridge.deliverMeta(callerKey, topic, candidatesJson, JSON.stringify({ ts: meta.ts, source: meta.source, bearer: meta.bearer }));
+    else Bridge.deliver(callerKey, topic, candidatesJson);
     return true;   // service is a blind pipe; the client opens with its own key
   }, { cacheLimit: grants.get(callerKey)?.cache === false ? 0 : CACHE_LIMIT });
 }

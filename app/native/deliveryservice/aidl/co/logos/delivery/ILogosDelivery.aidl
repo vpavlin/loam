@@ -6,13 +6,18 @@ interface ILogosDelivery {
     void subscribe(String appId, String topic);
     void send(String appId, String topic, in byte[] sealed);
     void unregisterClient(String appId);
-    String metrics();   // node peers/mesh as JSON (blind pipe stays blind)
-    // MUST stay LAST: AIDL assigns transaction ids by declaration order. Un-rebuilt client apps
-    // (kym/qaku/scala/perun) call metrics() at txn id 4 — inserting a method before it shifts metrics()
-    // to id 5, so clients hit the wrong method and see "Loam isn't running". New methods go at the end.
-    void requestStoreSync(String appId);   // fire-and-forget cold-start history pull; results arrive via callback
-    // HD identities (loam-keycard ADR 0001), APPENDED (see above). requestJson =
-    // {op:"status"} | {op:"identity", contextId} | {op:"sign", contextId, digestHex}; contextId "" = the main
-    // identity. The app namespace is the one recorded when the owner approved the caller, never the request's.
+    String metrics();
+    // APPEND ONLY: Binder numbers methods by position, so a method inserted before metrics() shifts
+    // every later transaction id and breaks every client built against the old order.
+    // Fire-and-forget: ask the shared node to pull cold-start history (waku_store_query) for this
+    // client's joined topics. Results come back through the normal onReceive callback.
+    void requestStoreSync(String appId);
+    // HD identities (loam-keycard ADR 0001), APPENDED. requestJson = {op:"status"} | {op:"identity", contextId}
+    // | {op:"sign", contextId, digestHex}; contextId "" = the main identity. The answer comes on cb.
     void hdCall(String appId, String requestJson, IHdCallback cb);
+    // Network timestamps (WhisperBox deadlines), APPENDED — never insert above: Binder txn ids are positional.
+    // The client asks for features (bit 1 = deliver via ILogosDeliveryCallback.onMessageMeta with the
+    // network timestamp + source); the service answers with the features it will use. An older Loam
+    // without this method replies empty, which reads as 0: the client stays on onMessage.
+    int setClientFeatures(String appId, int features);
 }

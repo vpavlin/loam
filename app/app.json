@@ -2,7 +2,7 @@
   "expo": {
     "name": "Loam",
     "slug": "loam",
-    "version": "0.0.56",
+    "version": "0.0.57",
     "platforms": [
       "android"
     ],
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "xyz.vpavlin.loam",
-      "versionCode": 56,
+      "versionCode": 57,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#14100C"

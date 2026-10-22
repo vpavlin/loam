@@ -37,6 +37,7 @@ object DeliveryHub {
 
   fun register(callerKey: String, cb: ILogosDeliveryCallback, appId: String, pkg: String, cert: String, label: String) {
     callbacks[callerKey] = cb
+    features.remove(callerKey)   // it asks again (setClientFeatures) if it supports more
     dispatch("register", mapOf("callerKey" to callerKey, "appId" to appId, "pkg" to pkg, "cert" to cert, "label" to label))
   }
   fun subscribe(callerKey: String, topic: String) { dispatch("subscribe", mapOf("callerKey" to callerKey, "topic" to topic)) }
@@ -66,7 +67,24 @@ object DeliveryHub {
     try { p.first.onResult(resultJson) } catch (_: Throwable) { /* client died */ }
   }
 
-  fun deliver(callerKey: String, topic: String, candidatesJson: String) {
-    try { callbacks[callerKey]?.onMessage(topic, candidatesJson) } catch (_: Throwable) { /* client died */ }
+  // Features each client asked for and we serve (setClientFeatures): 1 = onMessageMeta.
+  private val features = java.util.concurrent.ConcurrentHashMap<String, Int>()
+  const val FEATURE_META = 1
+  fun setFeatures(callerKey: String, requested: Int): Int {
+    val f = requested and FEATURE_META
+    features[callerKey] = f
+    return f
+  }
+
+  fun deliver(callerKey: String, topic: String, candidatesJson: String) = deliverMeta(callerKey, topic, candidatesJson, null)
+
+  // With meta (network timestamp + source) to a client that asked for it; the plain onMessage otherwise,
+  // so an older client never receives a callback it doesn't implement.
+  fun deliverMeta(callerKey: String, topic: String, candidatesJson: String, metaJson: String?) {
+    try {
+      val cb = callbacks[callerKey] ?: return
+      if (metaJson != null && ((features[callerKey] ?: 0) and FEATURE_META) != 0) cb.onMessageMeta(topic, candidatesJson, metaJson)
+      else cb.onMessage(topic, candidatesJson)
+    } catch (_: Throwable) { /* client died */ }
   }
 }
