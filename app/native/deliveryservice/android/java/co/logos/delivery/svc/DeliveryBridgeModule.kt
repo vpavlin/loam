@@ -29,6 +29,8 @@ class DeliveryBridgeModule(private val ctx: ReactApplicationContext) : ReactCont
 
   @ReactMethod fun deliver(callerKey: String, topic: String, candidatesJson: String) =
     DeliveryHub.deliver(callerKey, topic, candidatesJson)
+  @ReactMethod fun deliverMeta(callerKey: String, topic: String, candidatesJson: String, metaJson: String) =
+    DeliveryHub.deliverMeta(callerKey, topic, candidatesJson, metaJson)
   @ReactMethod fun setMetrics(json: String) { DeliveryHub.metricsJson = json }
   @ReactMethod fun hdReply(reqId: String, resultJson: String) = DeliveryHub.hdReply(reqId, resultJson)
   @ReactMethod fun setAuthorized(jsonArray: String) {
