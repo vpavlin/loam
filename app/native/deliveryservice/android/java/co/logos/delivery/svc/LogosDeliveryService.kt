@@ -100,6 +100,7 @@ class LogosDeliveryService : Service() {
   companion object {
     private const val TAG = "LOAMBOOT"
     private const val BOOT_TASK = "LoamBoot"   // == BOOT_TASK in src/lib/boot.ts
+    private val APP_ID = Regex("^[A-Za-z0-9._:-]{1,128}$")
     private const val NOT_APPROVED = "{\"state\":\"failed\",\"error\":\"not approved\"}"
     @Volatile private var bootTaskCtx = 0
   }
@@ -127,7 +128,8 @@ class LogosDeliveryService : Service() {
 
   private val binder = object : ILogosDelivery.Stub() {
     override fun registerClient(appId: String, cb: ILogosDeliveryCallback) {
-      if (appId.length > 128) return   // re-check R-2: a client-chosen string, bounded like topics
+      // a client-chosen label: bounded (re-check R-2) and plain characters only (R-6)
+      if (!APP_ID.matches(appId)) return
       val c = caller(); val ck = key(c)
       DeliveryHub.register(ck, cb, appId, c.pkg, c.cert, c.label)
       // When the client PROCESS dies (app swiped away / killed) it can't call

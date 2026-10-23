@@ -52,7 +52,8 @@ const PINNED_IDS: Record<string, string[]> = {
 /** Every other app gets a namespace bound to its package AND certificate, so a re-signed or fake copy
  *  of an app never lands in the real one's identities. */
 export function hdNamespace(appId: string, pkg: string, cert: string): string {
-  if (appId && PINNED_IDS[appId]?.includes(`${pkg}|${cert}`)) return appId;
+  // own keys only: "__proto__", "constructor"… must not reach Object.prototype (re-check R-6)
+  if (typeof appId === "string" && Object.prototype.hasOwnProperty.call(PINNED_IDS, appId) && PINNED_IDS[appId].includes(`${pkg}|${cert}`)) return appId;
   return `${pkg}|${cert}`;
 }
 const MAX_QUEUED_TOPICS = 64;   // per unapproved caller (audit L-4)
