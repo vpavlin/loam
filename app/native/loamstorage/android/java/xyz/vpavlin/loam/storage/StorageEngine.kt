@@ -32,7 +32,6 @@ object StorageEngine {
   private val CID = Regex("^z[1-9A-HJ-NP-Za-km-z]{40,90}$")
   private val PEER = Regex("^[1-9A-HJ-NP-Za-km-z]{40,80}$")
   private val ADDR = Regex("^/[A-Za-z0-9.:/_-]{3,200}$")
-  private val SPR = Regex("^spr:[A-Za-z0-9_-]{10,2000}$")
   const val MAX_FILE = 512L shl 20            // one CID at most 512 MiB
   @Volatile var cacheCap = 1L shl 30          // 1 GiB, LRU
   private const val KEEP_UNOPENED_MS = 3_600_000L   // a finished, never-opened file survives eviction for 1 h
@@ -44,9 +43,9 @@ object StorageEngine {
     @Volatile var error: String? = null
     @Volatile var cancelled = false
     @Volatile var queued = false
+    @Volatile var finishedAt = 0L
     val callers: MutableSet<String> = ConcurrentHashMap.newKeySet()
     val peers = ArrayList<Pair<String, Array<String>>>()
-    val sprs = LinkedHashSet<String>()
     fun json(): String = JSONObject().put("cid", cid).put("state", state).put("bytes", bytes).put("total", total)
       .apply { error?.let { put("error", it) } }.toString()
   }
@@ -57,7 +56,6 @@ object StorageEngine {
   private val side = Executors.newSingleThreadExecutor { r -> Thread(null, r, "loam-storage-side", 1L shl 20) }
   @Volatile private var node = 0L
   @Volatile private var nodeError: String? = null
-  private val knownSprs = LinkedHashSet<String>()
 
   fun init(ctx: Context) { if (!::app.isInitialized) app = ctx.applicationContext }
 
@@ -68,12 +66,12 @@ object StorageEngine {
   val enabled: Boolean get() = prefs().getBoolean("enabled", true)
   fun setEnabled(on: Boolean) {
     prefs().edit().putBoolean("enabled", on).apply()
-    if (!on) for (j in jobs.values) if (j.state == "queued" || j.state == "fetching") cancel(j.cid)
+    if (!on) for (j in jobs.values) if (j.state == "queued" || j.state == "fetching") cancelJob(j)
   }
   /** Drop every finished file (not running jobs' partial files). Returns bytes freed. */
   fun clearCache(): Long {
     var freed = 0L
-    cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") }?.forEach { freed += it.length(); it.delete() }
+    cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".owners") }?.forEach { freed += it.length(); it.delete(); owners(it.name).delete() }
     jobs.entries.removeIf { it.value.state == "done" || it.value.state == "failed" || it.value.state == "cancelled" }
     return freed
   }
@@ -88,6 +86,25 @@ object StorageEngine {
   private fun nodeDir() = File(app.filesDir, "loam-storage/node")
   private fun cached(cid: String) = File(cacheDir(), cid)
 
+  // ── who may see a CID (audit L-3). The cache is shared, but by CAPABILITY: an app reaches a file only
+  // after asking for it by its CID (fetch), and sees and cancels only its own jobs. Owners of finished
+  // files are kept beside them (<cid>.owners), so they survive Loam's restarts.
+  private fun owners(cid: String) = File(cacheDir(), "$cid.owners")
+  private fun ownerSet(cid: String): MutableSet<String> = try { owners(cid).readLines().filter { it.isNotBlank() }.toMutableSet() } catch (_: Throwable) { mutableSetOf() }
+  @Synchronized private fun addOwners(cid: String, cks: Collection<String>) {
+    val set = ownerSet(cid); if (set.addAll(cks)) owners(cid).writeText(set.joinToString("\n"))
+  }
+  private fun owns(ck: String?, cid: String): Boolean = ck == null || jobs[cid]?.callers?.contains(ck) == true || ownerSet(cid).contains(ck)
+
+  // job limits (audit L-6): at most 32 queued/fetching jobs, 8 per app; finished ones pruned
+  private const val MAX_ACTIVE = 32
+  private const val MAX_ACTIVE_PER_APP = 8
+  private fun active(j: Job) = j.state == "queued" || j.state == "fetching"
+  private fun prune() {
+    val terminal = jobs.values.filter { !active(it) }.sortedBy { it.finishedAt }
+    for (j in terminal.dropLast(64)) jobs.remove(j.cid, j)
+  }
+
   private fun online(): Boolean = try {
     val cm = app.getSystemService(ConnectivityManager::class.java)
     val caps = cm.getNetworkCapabilities(cm.activeNetwork)
@@ -100,8 +117,16 @@ object StorageEngine {
   fun fetch(callerKey: String, cid: String, peersJson: String): String {
     if (!CID.matches(cid)) return err("bad cid")
     if (!enabled) return err("Storage is turned off in Loam")
+    if (peersJson.length > 16384) return err("too many peers")
     val f = cached(cid)
-    if (f.isFile) { f.setLastModified(System.currentTimeMillis()); return JSONObject().put("cid", cid).put("state", "done").put("bytes", f.length()).put("total", f.length()).toString() }
+    if (f.isFile) { addOwners(cid, listOf(callerKey)); f.setLastModified(System.currentTimeMillis()); return JSONObject().put("cid", cid).put("state", "done").put("bytes", f.length()).put("total", f.length()).toString() }
+    val existing = jobs[cid]
+    if (existing == null || !active(existing)) {
+      prune()
+      val act = jobs.values.filter { active(it) }
+      if (act.size >= MAX_ACTIVE) return err("too many downloads queued in Loam; try again later")
+      if (act.count { it.callers.contains(callerKey) } >= MAX_ACTIVE_PER_APP) return err("this app already has $MAX_ACTIVE_PER_APP downloads queued")
+    }
     // a "done" job whose file is gone (cache cleared or evicted) starts over
     val job = jobs.compute(cid) { _, old -> if (old == null || old.state == "failed" || old.state == "cancelled" || old.state == "done") Job(cid) else old }!!
     job.callers.add(callerKey)
@@ -110,37 +135,51 @@ object StorageEngine {
     return job.json()
   }
 
-  fun status(cid: String): String {
+  /** `ck` = the calling app (null = Loam's own UI). An app sees only CIDs it asked for. */
+  fun status(ck: String?, cid: String): String {
+    if (!CID.matches(cid)) return err("bad cid")
+    val none = JSONObject().put("cid", cid).put("state", "none").toString()
+    if (!owns(ck, cid)) return none
     jobs[cid]?.let { if (it.state != "done" || cached(cid).isFile) return it.json() }
     val f = cached(cid)
-    return if (f.isFile) JSONObject().put("cid", cid).put("state", "done").put("bytes", f.length()).put("total", f.length()).toString()
-    else JSONObject().put("cid", cid).put("state", "none").toString()
+    return if (f.isFile) JSONObject().put("cid", cid).put("state", "done").put("bytes", f.length()).put("total", f.length()).toString() else none
   }
 
-  fun cancel(cid: String): String {
-    val job = jobs[cid] ?: return status(cid)
-    if (job.state == "done" || job.state == "failed") return job.json()
-    job.cancelled = true
-    if (job.state == "queued") { job.state = "cancelled"; return job.json() }
-    side.execute { try { if (node != 0L) StorageNative.storageDownloadCancel(node, cid) } catch (t: Throwable) { Log.w(TAG, "cancel", t) } }
+  /** An app cancels only its own interest; the download stops when no app wants it any more. */
+  fun cancel(ck: String?, cid: String): String {
+    if (!CID.matches(cid)) return err("bad cid")
+    val job = jobs[cid] ?: return status(ck, cid)
+    if (ck != null) {
+      if (!job.callers.contains(ck)) return status(ck, cid)
+      job.callers.remove(ck)
+      if (job.callers.isNotEmpty() || !active(job)) return JSONObject(job.json()).put("state", "cancelled").toString()
+    }
+    cancelJob(job)
     return job.json()
   }
+  private fun cancelJob(job: Job) {
+    if (!active(job)) return
+    job.cancelled = true
+    if (job.state == "queued") { job.state = "cancelled"; return }
+    side.execute { try { if (node != 0L) StorageNative.storageDownloadCancel(node, job.cid) } catch (t: Throwable) { Log.w(TAG, "cancel", t) } }
+  }
 
-  /** Read-only descriptor to a finished CID, or null. Touches it for LRU. */
-  fun open(cid: String): ParcelFileDescriptor? {
-    if (!CID.matches(cid)) return null
+  /** Read-only descriptor to a finished CID this app asked for, or null. Touches it for LRU. */
+  fun open(ck: String?, cid: String): ParcelFileDescriptor? {
+    if (!CID.matches(cid) || !enabled || !owns(ck, cid)) return null   // L-13: off means off
     val f = cached(cid)
     if (!f.isFile) return null
     f.setLastModified(System.currentTimeMillis())
     return ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
   }
 
-  fun info(): String {
-    val files = cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") } ?: emptyList()
+  /** ck = null: Loam's own UI, everything. An app: aggregate cache numbers and only its own jobs. */
+  fun info(ck: String? = null): String {
+    val files = cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".owners") } ?: emptyList()
+    val mine = jobs.values.filter { active(it) && (ck == null || it.callers.contains(ck)) }
     return JSONObject().put("enabled", enabled).put("state", nodeState()).put("running", node != 0L).put("online", online()).put("cacheBytes", files.sumOf { it.length() })
       .put("cacheFiles", files.size).put("cacheCap", cacheCap)
-      .put("jobs", JSONArray(jobs.values.filter { it.state == "queued" || it.state == "fetching" }.map { j ->
-        JSONObject(j.json()).put("apps", JSONArray(j.callers.map { it.substringBefore('|') })) }))
+      .put("jobs", JSONArray(mine.map { j -> JSONObject(j.json()).apply { if (ck == null) put("apps", JSONArray(j.callers.map { it.substringBefore('|') })) } }))
       .apply { nodeError?.let { put("nodeError", it) } }.toString()
   }
 
@@ -152,7 +191,7 @@ object StorageEngine {
       if (job.cancelled) { job.state = "cancelled"; return }
       if (!online()) { fail(job, "offline"); return }
       job.state = "fetching"
-      val c = ensureNode(job.sprs.toList()) ?: run { fail(job, "node: ${nodeError ?: "did not start"}"); return }
+      val c = ensureNode() ?: run { fail(job, "node: ${nodeError ?: "did not start"}"); return }
       for ((peerId, addrs) in job.peers) {
         if (job.cancelled) break
         try { StorageNative.storageConnect(c, peerId, addrs) } catch (t: Throwable) { Log.w(TAG, "connect", t) }
@@ -165,7 +204,7 @@ object StorageEngine {
         ?: run { fail(job, "size unknown"); return }
       if (size > MAX_FILE || size > cacheCap) { fail(job, "too large ($size bytes)"); return }
       job.total = size
-      makeRoom(size)
+      if (!makeRoom(size)) { fail(job, "cache full"); return }
       val part = File(cacheDir(), "$cid.part"); part.delete()
       val progress = startProgress(job, part)
       try {
@@ -182,11 +221,12 @@ object StorageEngine {
       val dst = cached(cid)
       if (!part.renameTo(dst)) { fail(job, "could not store the file"); return }
       dst.setLastModified(System.currentTimeMillis())
+      addOwners(cid, job.callers.toList())
       job.bytes = size; job.state = "done"
     } catch (t: Throwable) {
       fail(job, t.message ?: "storage error")
     } finally {
-      job.queued = false
+      job.queued = false; job.finishedAt = System.currentTimeMillis()
       if (job.state != "done") File(cacheDir(), "$cid.part").delete()
       if (job.state == "cancelled" || job.state == "failed") side.execute { try { if (node != 0L) StorageNative.storageDelete(node, cid) } catch (_: Throwable) {} }
     }
@@ -209,16 +249,17 @@ object StorageEngine {
   }.apply { isDaemon = true; start() }
 
   // ── the node: started once per process, never restarted in-process ─────────────────────────────
-  @Synchronized private fun ensureNode(sprs: List<String>): Long? {
+  // The shared node's bootstrap is never taken from an app (audit L-7): apps' peers are only dialled
+  // for their own job (storageConnect above).
+  @Synchronized private fun ensureNode(): Long? {
     if (node != 0L) return node
     if (nodeError != null) return null       // a failed start is not retried in this process (a 2nd start aborts)
     try {
       StorageNative.load()
       StorageNative.storageSetup()
       nodeDir().deleteRecursively(); nodeDir().mkdirs()   // scratch: see the class comment
-      knownSprs.addAll(sprs)
       val cfg = JSONObject().put("log-level", "WARN").put("data-dir", nodeDir().absolutePath)
-      if (knownSprs.isNotEmpty()) cfg.put("bootstrap-node", JSONArray(knownSprs.toList())) else cfg.put("network", "logos.test")
+        .put("network", "logos.test")
       val c = StorageNative.storageNew(cfg.toString())
       if (c == 0L) { nodeError = "storage_new failed"; return null }
       val r = JSONObject(StorageNative.storageStart(c))
@@ -234,16 +275,20 @@ object StorageEngine {
   }
 
   // ── cache: LRU by last use, never evicting a running job's file or a fresh, unopened one ─────────
-  private fun makeRoom(incoming: Long) {
-    val files = cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") }?.sortedBy { it.lastModified() } ?: return
-    var used = files.sumOf { it.length() }
+  // The cap is hard (audit L-5): oldest first, files younger than an hour only when nothing older is
+  // left; a download that still doesn't fit fails with "cache full" instead of overrunning the cap.
+  private fun makeRoom(incoming: Long): Boolean {
+    if (incoming > cacheCap) return false
+    val files = cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".owners") } ?: return true
+    var used = files.sumOf { it.length() } + (cacheDir().listFiles()?.filter { it.name.endsWith(".part") }?.sumOf { it.length() } ?: 0L)
     val now = System.currentTimeMillis()
-    for (f in files) {
+    val order = files.sortedWith(compareBy<File>({ now - it.lastModified() < KEEP_UNOPENED_MS }, { it.lastModified() }))
+    for (f in order) {
       if (used + incoming <= cacheCap) break
-      if (now - f.lastModified() < KEEP_UNOPENED_MS) continue
       if (jobs[f.name]?.state == "fetching") continue
-      used -= f.length(); f.delete()
+      used -= f.length(); f.delete(); owners(f.name).delete()
     }
+    return used + incoming <= cacheCap
   }
 
   private fun parsePeers(json: String, job: Job) {
@@ -255,7 +300,6 @@ object StorageEngine {
         val a = p.optJSONArray("addrs") ?: JSONArray()
         val addrs = (0 until minOf(a.length(), 4)).map { a.optString(it) }.filter { ADDR.matches(it) && !selfAddr(it) }
         synchronized(job.peers) { if (job.peers.none { it.first == id }) job.peers.add(id to addrs.toTypedArray()) }
-        p.optString("spr").takeIf { SPR.matches(it) }?.let { job.sprs.add(it) }
       }
     } catch (_: Throwable) { /* no peers: the node's own discovery is all we have */ }
   }
@@ -268,9 +312,14 @@ object StorageEngine {
     val v4 = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(h)
     if (!v4 && !h.contains(':')) return m.groupValues[1].lowercase() == "ip4"   // a DNS name is fine; an odd ip4 form is not
     return try {   // literal only: getByName on a literal never touches DNS
-      val ip = java.net.InetAddress.getByName(h)
-      ip.isLoopbackAddress || ip.isLinkLocalAddress || ip.isAnyLocalAddress ||
-        (ip is java.net.Inet6Address && h.startsWith("::ffff:"))
+      var ip = java.net.InetAddress.getByName(h)
+      // judge the PARSED address (audit L-12): any spelling of an IPv4-mapped/-compatible IPv6 is
+      // checked as the IPv4 address it carries
+      val b = ip.address
+      if (b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } &&
+          ((b[10] == 0xff.toByte() && b[11] == 0xff.toByte()) || (b[10] == 0.toByte() && b[11] == 0.toByte())))
+        ip = java.net.InetAddress.getByAddress(b.copyOfRange(12, 16))
+      ip.isLoopbackAddress || ip.isLinkLocalAddress || ip.isAnyLocalAddress
     } catch (_: Throwable) { true }
   }
 }

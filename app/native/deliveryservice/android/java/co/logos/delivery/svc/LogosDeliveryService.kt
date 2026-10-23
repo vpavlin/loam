@@ -136,9 +136,17 @@ class LogosDeliveryService : Service() {
       // what makes the offline cache actually fill while an app is closed.
       try { cb.asBinder().linkToDeath({ DeliveryHub.unregister(ck) }, 0) } catch (_: Throwable) {}
     }
-    override fun subscribe(appId: String, topic: String) { DeliveryHub.subscribe(key(caller()), topic) }
-    override fun send(appId: String, topic: String, sealed: ByteArray) =
-      DeliveryHub.send(key(caller()), topic, Base64.encodeToString(sealed, Base64.NO_WRAP))
+    override fun subscribe(appId: String, topic: String) {
+      if (topic.length > 256) return
+      DeliveryHub.subscribe(key(caller()), topic)
+    }
+    // An unapproved caller's sends are dropped here, before anything is buffered (audit L-4); approved
+    // ones are capped at 1 MiB (a sealed app message is a few KB).
+    override fun send(appId: String, topic: String, sealed: ByteArray) {
+      val ck = key(caller())
+      if (!DeliveryHub.isAuthorized(ck) || sealed.size > (1 shl 20) || topic.length > 256) return
+      DeliveryHub.send(ck, topic, Base64.encodeToString(sealed, Base64.NO_WRAP))
+    }
     override fun requestStoreSync(appId: String) = DeliveryHub.requestStoreSync(key(caller()))
     override fun unregisterClient(appId: String) = DeliveryHub.unregister(key(caller()))
     override fun setClientFeatures(appId: String, features: Int): Int = DeliveryHub.setFeatures(key(caller()), features)
@@ -162,14 +170,15 @@ class LogosDeliveryService : Service() {
       val ck = storageGate() ?: return NOT_APPROVED
       return xyz.vpavlin.loam.storage.StorageEngine.fetch(ck, cid, peersJson)
     }
+    // every Storage call is scoped to the calling app (audit L-3): its own jobs, files it asked for
     override fun storageStatus(appId: String, cid: String): String =
-      if (storageGate() == null) NOT_APPROVED else xyz.vpavlin.loam.storage.StorageEngine.status(cid)
+      storageGate()?.let { xyz.vpavlin.loam.storage.StorageEngine.status(it, cid) } ?: NOT_APPROVED
     override fun storageCancel(appId: String, cid: String): String =
-      if (storageGate() == null) NOT_APPROVED else xyz.vpavlin.loam.storage.StorageEngine.cancel(cid)
+      storageGate()?.let { xyz.vpavlin.loam.storage.StorageEngine.cancel(it, cid) } ?: NOT_APPROVED
     override fun storageOpen(appId: String, cid: String): android.os.ParcelFileDescriptor? =
-      if (storageGate() == null) null else xyz.vpavlin.loam.storage.StorageEngine.open(cid)
+      storageGate()?.let { xyz.vpavlin.loam.storage.StorageEngine.open(it, cid) }
     override fun storageInfo(appId: String): String =
-      if (storageGate() == null) NOT_APPROVED else xyz.vpavlin.loam.storage.StorageEngine.info()
+      storageGate()?.let { xyz.vpavlin.loam.storage.StorageEngine.info(it) } ?: NOT_APPROVED
 
     override fun metrics(): String {
       val c = caller(); val ck = key(c)

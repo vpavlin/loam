@@ -17,16 +17,24 @@ object DeliveryHub {
   // binds & subscribes BEFORE Loam's node/JS is up (Loam wasn't originally running) never got wired
   // up, and nothing replayed it when the JS attached — so it never re-subscribed. Buffer such
   // requests and replay them in order once the JS connects (flushPending, from DeliveryBridgeModule).
+  // Bounded by count AND bytes (audit L-4): an app that binds while Loam's JS is down must not be able
+  // to grow this without limit. Sends from unapproved callers never get here (LogosDeliveryService).
   private val pending = ArrayList<Pair<String, Map<String, String?>>>()
+  private var pendingBytes = 0L
+  private const val PENDING_MAX = 1024
+  private const val PENDING_MAX_BYTES = 8L shl 20
   private fun dispatch(kind: String, data: Map<String, String?>) {
     val cb = toJs
     if (cb != null) { cb(kind, data); return }
-    synchronized(pending) { if (pending.size < 1024) pending.add(kind to data) }
+    val size = data.values.sumOf { (it?.length ?: 0).toLong() }
+    synchronized(pending) {
+      if (pending.size < PENDING_MAX && pendingBytes + size <= PENDING_MAX_BYTES) { pending.add(kind to data); pendingBytes += size }
+    }
   }
   fun flushPending() {
     if (toJs == null) return
     val drain: List<Pair<String, Map<String, String?>>>
-    synchronized(pending) { if (pending.isEmpty()) return; drain = ArrayList(pending); pending.clear() }
+    synchronized(pending) { if (pending.isEmpty()) return; drain = ArrayList(pending); pending.clear(); pendingBytes = 0 }
     for ((kind, data) in drain) { val cb = toJs ?: break; try { cb(kind, data) } catch (_: Throwable) {} }
   }
 
@@ -58,6 +66,7 @@ object DeliveryHub {
   fun hdCall(callerKey: String, requestJson: String, cb: co.logos.delivery.IHdCallback) {
     val now = System.currentTimeMillis()
     hdPending.entries.removeIf { now - it.value.second > 60_000 }
+    if (hdPending.size >= 64) { try { cb.onResult("{\"error\":\"busy\"}") } catch (_: Throwable) {}; return }   // audit L-11
     val id = "hd" + hdSeq.incrementAndGet()
     hdPending[id] = cb to now
     dispatch("hd", mapOf("callerKey" to callerKey, "reqId" to id, "request" to requestJson))

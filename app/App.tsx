@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import * as Clipboard from "expo-clipboard";
-import { serviceBridgeAvailable, lists, approve, deny, revoke, setCache, Client } from "./src/lib/service-bridge";
+import { serviceBridgeAvailable, lists, approve, deny, revoke, setCache, setMainSign, hdNamespace, Client } from "./src/lib/service-bridge";
 import { IdentityCard } from "./src/components/IdentityCard";
 import { StorageCard } from "./src/components/StorageCard";
 import { getBootState, onBootState, uiAttached, setMeshForced, setTelemetrySecret, setTelemetryEnabled, dismissCrash, Mode } from "./src/lib/boot";
@@ -226,7 +226,7 @@ export default function App() {
         {pending.map((c) => (
           <View key={c.callerKey} style={s.reqCard}>
             <Text style={s.appName}>{c.label}</Text>
-            <Text style={s.appMeta}>{c.pkg}{"\n"}id {c.appId} · cert {shortCert(c.cert)}</Text>
+            <Text style={s.appMeta}>{c.pkg}{"\n"}identities under “{hdNamespace(c.appId, c.pkg)}” · cert {shortCert(c.cert)}</Text>
             <Text style={s.ask}>wants to use the shared node</Text>
             <View style={s.row2}>
               <TouchableOpacity style={[s.btn, s.deny]} onPress={() => deny(c.callerKey)}><Text style={s.btnT}>Deny</Text></TouchableOpacity>
@@ -254,6 +254,15 @@ export default function App() {
                   {g.cache === false ? "Cache off" : `Cache while closed · ${g.buffered} waiting`}
                 </Text>
               </View>
+              <View style={s.cacheRow}>
+                <Switch
+                  value={g.mainSign === true}
+                  onValueChange={(v) => setMainSign(g.callerKey, v)}
+                  trackColor={{ true: "#4E8A3C", false: "#3A2E20" }}
+                />
+                <Text style={s.cacheLabel}>{g.mainSign ? "Can sign as your main identity" : "Can't sign as your main identity"}</Text>
+              </View>
+              <Text style={[s.appMeta, { marginTop: 4 }]}>identities under “{hdNamespace(g.appId, g.pkg)}”</Text>
             </View>
             <TouchableOpacity style={[s.btn, s.deny]} onPress={() => revoke(g.callerKey)}><Text style={s.btnT}>Revoke</Text></TouchableOpacity>
           </View>

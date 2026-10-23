@@ -101,9 +101,10 @@ Don't use `loam-transport` (or even RN)? Speak the AIDL yourself.
 **Declare visibility + copy the AIDL** (`package co.logos.delivery`), enable
 `android { buildFeatures { aidl true } }`, and:
 ```xml
-<queries><package android:name="co.logos.delivery" /></queries>
+<queries><package android:name="xyz.vpavlin.loam" /></queries>
 ```
-**Bind** `co.logos.delivery/.svc.LogosDeliveryService` (action `co.logos.delivery.ILogosDelivery`),
+**Bind** `xyz.vpavlin.loam/co.logos.delivery.svc.LogosDeliveryService` (action `co.logos.delivery.ILogosDelivery`;
+the app is `xyz.vpavlin.loam`, the AIDL and service classes keep the `co.logos.delivery` namespace),
 then `registerClient` (triggers consent) / `subscribe` / `send(topic, sealedBytes)`; receive via
 the callback. `metrics()` returns `{"authorized":false}` until the owner approves you.
 

@@ -97,13 +97,19 @@ export async function hdSign(appId: string, contextId: string, digestHex: string
 }
 
 /** Answer one AIDL hd request for an approved app (`appId` comes from the approval record). */
-export async function hdHandle(appId: string, requestJson: string): Promise<unknown> {
+export async function hdHandle(appId: string, requestJson: string, perms: { mainSign: boolean } = { mainSign: false }): Promise<unknown> {
   let req: { op?: string; contextId?: string; digestHex?: string };
+  if (requestJson.length > 4096) return { error: "bad request" };
   try { req = JSON.parse(requestJson); } catch { return { error: "bad request" }; }
   try {
+    const ctx = typeof req.contextId === "string" ? req.contextId.slice(0, 256) : "";
     if (req.op === "status") return await hdStatus();
-    if (req.op === "identity") return await hdIdentity(appId, req.contextId || "");
-    if (req.op === "sign") return await hdSign(appId, req.contextId || "", req.digestHex || "");
+    if (req.op === "identity") return await hdIdentity(appId, ctx);
+    if (req.op === "sign") {
+      // signing as the MAIN identity needs its own grant (audit L-2); an app's own derived ones don't
+      if (!ctx && !perms.mainSign) return { error: "not allowed to sign as your main identity — allow it for this app in Loam" };
+      return await hdSign(appId, ctx, req.digestHex || "");
+    }
     return { error: "unknown op" };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };

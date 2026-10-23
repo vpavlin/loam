@@ -53,7 +53,20 @@ void   subscribe(String appId, String topic)
 void   send(String appId, String topic, in byte[] sealed)   // note: "sealed"
 void   unregisterClient(String appId)
 String metrics()                                            // node health JSON only
+void   requestStoreSync(String appId)                       // pull history for this app's topics
+void   hdCall(String appId, String requestJson, IHdCallback cb)   // HD identities, §T7
+int    setClientFeatures(String appId, int features)
+String storageFetch(String appId, String cid, String peersJson)   // Logos Storage (ADR 0020)
+String storageStatus(String appId, String cid)
+String storageCancel(String appId, String cid)
+ParcelFileDescriptor storageOpen(String appId, String cid)  // read-only, finished files only
+String storageInfo(String appId)
 ```
+
+The Storage methods move whole files, but only content-addressed public ones: an app names a CID,
+Loam fetches it and hands back a read-only descriptor. An app sees only CIDs it asked for itself
+(ADR 0020, 2026-10-23 amendment), and checks what it gets (Backpack verifies signature and hash).
+`hdCall` returns public keys and signatures, never a private key or the mnemonic.
 
 There is **no parameter that carries a key or plaintext.** The `byte[]` is already
 AEAD-sealed by the app; the transport is crypto-agnostic (each core owns its
@@ -91,7 +104,7 @@ parameter to the AIDL.*
 | T4 | Consented app **actively** subscribes to B's topics | `subscribe(appId, B_topic)` | *Nothing today* — `_subscribe` has no namespace ACL | **Ciphertext + metadata of B** (not plaintext) — §5.1 |
 | T5 | Network/fleet observer | Public Logos wire | Inherent; content is AEAD | Topic, size, timing, sender-id metadata — §5.2 |
 | T6 | Spoof/inject into B's channel | Publish on B's topic | AEAD integrity — forgery fails B's open | Garbage/DoS spam — §5.4 |
-| T7 | Impersonate another app | Assert a foreign `appId` | Tenant/grant keyed by binder `(pkg,cert)`, not the self-asserted `appId` | `appId` is a routing label only; keep security decisions on `(pkg,cert)` |
+| T7 | Impersonate another app | Assert a foreign `appId` | Tenant/grant keyed by binder `(pkg,cert)`, not the self-asserted `appId`. The HD namespace too: an app's identities derive under its **package name**; the short names already in use (`scala`, `kith`, `kym`, …) are pinned to their packages, so another app claiming `appId:"scala"` gets keys under its own package, not Scala's | Signing with the **main** identity (empty context) needs a second, per-app switch in Loam ("Can sign as your main identity"), off by default |
 
 ## 5. Residual risks & recommended changes (prioritized)
 

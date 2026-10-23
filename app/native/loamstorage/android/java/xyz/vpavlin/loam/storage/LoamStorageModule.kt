@@ -12,7 +12,7 @@ import com.facebook.react.uimanager.ViewManager
 class LoamStorageModule(rc: ReactApplicationContext) : ReactContextBaseJavaModule(rc) {
   init { StorageEngine.init(rc) }
   override fun getName() = "LoamStorage"
-  @ReactMethod fun info(promise: Promise) { Thread { promise.resolve(try { StorageEngine.info() } catch (t: Throwable) { "{}" }) }.start() }
+  @ReactMethod fun info(promise: Promise) { Thread { promise.resolve(try { StorageEngine.info(null) } catch (t: Throwable) { "{}" }) }.start() }
   @ReactMethod fun setEnabled(on: Boolean, promise: Promise) { StorageEngine.setEnabled(on); promise.resolve(on) }
   @ReactMethod fun clearCache(promise: Promise) { Thread { promise.resolve(StorageEngine.clearCache().toDouble()) }.start() }
 }

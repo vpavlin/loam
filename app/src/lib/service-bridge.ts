@@ -26,7 +26,26 @@ const GRANTS = (FileSystem.documentDirectory || "") + "logos-delivery-grants.jso
 // oldest are dropped and the app reconciles the gap. Per-app toggle = future UI.
 const CACHE_LIMIT = 1000;
 export type Client = { callerKey: string; appId: string; pkg: string; cert: string; label: string };
-type Grant = Client & { granted: boolean; cache?: boolean };
+type Grant = Client & { granted: boolean; cache?: boolean; mainSign?: boolean };
+
+// ── HD identity namespace (audit L-1) ────────────────────────────────────────────────────────────
+// The app id a client sends is only a claim. Identities derive under a namespace, so the namespace
+// must belong to the VERIFIED package: the shipped apps' ids are pinned to their packages (their users'
+// identities already derive under these ids); any other id must equal the caller's own package name,
+// else the caller gets its package as namespace. A client can never land in another app's namespace.
+// Freequencies is built on Scala's and Kith's data (scala-sdk, kith-sdk) and signs in their spaces, so it
+// is the one package allowed into those two namespaces besides their own apps.
+const PINNED_IDS: Record<string, string[]> = {
+  scala: ["xyz.vpavlin.scala", "xyz.vpavlin.freequencies"], kith: ["xyz.vpavlin.kith", "xyz.vpavlin.freequencies"],
+  kym: ["xyz.vpavlin.kym"], qaku: ["xyz.vpavlin.qaku"], perun: ["xyz.vpavlin.perun"],
+  whisperbox: ["xyz.vpavlin.whisperbox"], foray: ["xyz.vpavlin.foray"], freequencies: ["xyz.vpavlin.freequencies"],
+};
+export function hdNamespace(appId: string, pkg: string): string {
+  if (appId && PINNED_IDS[appId]?.includes(pkg)) return appId;
+  if (appId && appId === pkg) return appId;
+  return pkg;
+}
+const MAX_QUEUED_TOPICS = 64;   // per unapproved caller (audit L-4)
 
 const grants = new Map<string, Grant>();                       // callerKey -> grant (persisted)
 const pending = new Map<string, Client>();                     // awaiting user decision
@@ -107,7 +126,7 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
         }
       } else if (r.kind === "subscribe") {
         if (active.has(ck)) await transport.clientSubscribe(ck, r.topic);
-        else { const q = queued.get(ck) || []; q.push(r.topic); queued.set(ck, q); }   // buffer until approved
+        else { const q = queued.get(ck) || []; if (q.length < MAX_QUEUED_TOPICS && !q.includes(r.topic)) q.push(r.topic); queued.set(ck, q); }   // buffer until approved (bounded)
       } else if (r.kind === "send") {
         if (active.has(ck)) await transport.publishSealed(r.topic, toByteArray(r.sealedB64));   // ungranted sends dropped
       } else if (r.kind === "storeSync") {
@@ -120,7 +139,7 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
         const g = grants.get(ck);
         const reply = (j: unknown) => { try { Bridge.hdReply(r.reqId, JSON.stringify(j)); } catch { /* */ } };
         if (!g?.granted) { reply({ error: "not approved" }); return; }
-        reply(await hdHandle(g.appId || g.pkg, r.request || "{}"));
+        reply(await hdHandle(hdNamespace(g.appId, g.pkg), r.request || "{}", { mainSign: g.mainSign === true }));
       } else if (r.kind === "touch") {
         if (!grants.get(ck)?.granted && !pending.has(ck)) {
           pending.set(ck, { callerKey: ck, appId: r.appId || "", pkg: r.pkg, cert: r.cert, label: r.label });
@@ -152,6 +171,13 @@ export async function setCache(callerKey: string, on: boolean) {
   const g = grants.get(callerKey); if (!g) return;
   g.cache = on; grants.set(callerKey, g); await persist();
   try { transport.setClientCache(callerKey, on ? CACHE_LIMIT : 0); } catch { /* */ }
+  onChange && onChange();
+}
+/** Allow (or stop) an approved app to sign with the owner's MAIN identity (audit L-2). Off by default:
+ *  approving an app lets it use Loam and its own derived identities, not sign as you. */
+export async function setMainSign(callerKey: string, on: boolean) {
+  const g = grants.get(callerKey); if (!g) return;
+  g.mainSign = on; grants.set(callerKey, g); await persist();
   onChange && onChange();
 }
 export async function deny(callerKey: string) { pending.delete(callerKey); queued.delete(callerKey); onChange && onChange(); }

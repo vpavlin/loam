@@ -4,7 +4,7 @@
 
 **Loam** is the shared-node app — the soil your apps grow in: a sprout-and-mesh brand for the one node many apps root into. (The Android service namespace stays `co.logos.delivery`; only the app/product name is Loam.)
 
-This repo is the **design doc**, the original **runnable prototype** (`demo/`, still passing), and now the **Loam service app** (`app/`, package `co.logos.delivery`) that implements it — a Kotlin foreground service + AIDL wrapping the shared `loam-transport` broker, which apps bind to over IPC.
+This repo is the **design doc**, the original **runnable prototype** (`demo/`, still passing), and now the **Loam service app** (`app/`, application id `xyz.vpavlin.loam`; service classes in `co.logos.delivery`) that implements it — a Kotlin foreground service + AIDL wrapping the shared `loam-transport` broker, which apps bind to over IPC.
 
 ```
 node demo/demo.mjs        # proves the core thesis (broker/routing), no arm64 node needed
@@ -46,7 +46,7 @@ This is the desktop host role (one component owns delivery, app cores are its cl
 
 | Path | What it is | Status |
 |------|-----------|--------|
-| `app/` | **Loam — the shared node service** (package `co.logos.delivery`). Expo/RN app: runs `SharedDeliveryNode`+`RealNode` from the transport package behind a Kotlin **foreground service + AIDL** (`app/native/deliveryservice`); other apps bind as broker `Tenant`s | **Service 0.0.25 — on-device verified** (consent + multi-tenant + offline cache) |
+| `app/` | **Loam — the shared node service** (application id `xyz.vpavlin.loam`). Expo/RN app: runs `SharedDeliveryNode`+`RealNode` from the transport package behind a Kotlin **foreground service + AIDL** (`app/native/deliveryservice`); other apps bind as broker `Tenant`s | **Service 0.0.25 — on-device verified** (consent + multi-tenant + offline cache) |
 | `app/src/lib/logos-transport-pkg` | The shared TS transport (submodule → `vpavlin/loam-transport`; on-disk dir kept as `logos-transport-pkg`): broker + `RealNode` + `ServiceNode` + JNI | **real, on-device proven** (qaku/kym ship it) |
 | `src/broker.mjs` | `SharedDeliveryNode` + `Tenant` — the original broker prototype (the seam) | **real, tested** (superseded in prod by the submodule) |
 | `src/shard.mjs` | `shardFor()` ported verbatim from the apps' transport | **real** (matches prod) |
