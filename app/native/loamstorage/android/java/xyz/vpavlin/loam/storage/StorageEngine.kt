@@ -68,8 +68,13 @@ object StorageEngine {
     prefs().edit().putBoolean("enabled", on).apply()
     if (!on) for (j in jobs.values) if (j.state == "queued" || j.state == "fetching") cancelJob(j)
   }
+  /** Partial files whose job isn't fetching are leftovers of a crash or a kill (re-check R-4). */
+  private fun sweepParts() {
+    cacheDir().listFiles()?.filter { it.name.endsWith(".part") && jobs[it.name.removeSuffix(".part")]?.state != "fetching" }?.forEach { it.delete() }
+  }
   /** Drop every finished file (not running jobs' partial files). Returns bytes freed. */
   fun clearCache(): Long {
+    sweepParts()
     var freed = 0L
     cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".owners") }?.forEach { freed += it.length(); it.delete(); owners(it.name).delete() }
     jobs.entries.removeIf { it.value.state == "done" || it.value.state == "failed" || it.value.state == "cancelled" }
@@ -280,6 +285,7 @@ object StorageEngine {
   private fun makeRoom(incoming: Long): Boolean {
     if (incoming > cacheCap) return false
     val files = cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".owners") } ?: return true
+    sweepParts()
     var used = files.sumOf { it.length() } + (cacheDir().listFiles()?.filter { it.name.endsWith(".part") }?.sumOf { it.length() } ?: 0L)
     val now = System.currentTimeMillis()
     val order = files.sortedWith(compareBy<File>({ now - it.lastModified() < KEEP_UNOPENED_MS }, { it.lastModified() }))
@@ -312,14 +318,14 @@ object StorageEngine {
     val v4 = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(h)
     if (!v4 && !h.contains(':')) return m.groupValues[1].lowercase() == "ip4"   // a DNS name is fine; an odd ip4 form is not
     return try {   // literal only: getByName on a literal never touches DNS
-      var ip = java.net.InetAddress.getByName(h)
-      // judge the PARSED address (audit L-12): any spelling of an IPv4-mapped/-compatible IPv6 is
-      // checked as the IPv4 address it carries
+      // judge the PARSED address (audit L-12), first as itself (::1, ::, fe80::), then — for an
+      // IPv4-mapped one (::ffff:0:0/96) in any spelling — as the IPv4 address it carries (re-check R-3)
+      val ip = java.net.InetAddress.getByName(h)
+      fun bad(a: java.net.InetAddress) = a.isLoopbackAddress || a.isLinkLocalAddress || a.isAnyLocalAddress
+      if (bad(ip)) return true
       val b = ip.address
-      if (b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } &&
-          ((b[10] == 0xff.toByte() && b[11] == 0xff.toByte()) || (b[10] == 0.toByte() && b[11] == 0.toByte())))
-        ip = java.net.InetAddress.getByAddress(b.copyOfRange(12, 16))
-      ip.isLoopbackAddress || ip.isLinkLocalAddress || ip.isAnyLocalAddress
+      b.size == 16 && (0 until 10).all { b[it] == 0.toByte() } && b[10] == 0xff.toByte() && b[11] == 0xff.toByte() &&
+        bad(java.net.InetAddress.getByAddress(b.copyOfRange(12, 16)))
     } catch (_: Throwable) { true }
   }
 }

@@ -127,6 +127,7 @@ class LogosDeliveryService : Service() {
 
   private val binder = object : ILogosDelivery.Stub() {
     override fun registerClient(appId: String, cb: ILogosDeliveryCallback) {
+      if (appId.length > 128) return   // re-check R-2: a client-chosen string, bounded like topics
       val c = caller(); val ck = key(c)
       DeliveryHub.register(ck, cb, appId, c.pkg, c.cert, c.label)
       // When the client PROCESS dies (app swiped away / killed) it can't call

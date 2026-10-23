@@ -33,17 +33,27 @@ type Grant = Client & { granted: boolean; cache?: boolean; mainSign?: boolean };
 // must belong to the VERIFIED package: the shipped apps' ids are pinned to their packages (their users'
 // identities already derive under these ids); any other id must equal the caller's own package name,
 // else the caller gets its package as namespace. A client can never land in another app's namespace.
-// Freequencies is built on Scala's and Kith's data (scala-sdk, kith-sdk) and signs in their spaces, so it
-// is the one package allowed into those two namespaces besides their own apps.
-const PINNED_IDS: Record<string, string[]> = {
-  scala: ["xyz.vpavlin.scala", "xyz.vpavlin.freequencies"], kith: ["xyz.vpavlin.kith", "xyz.vpavlin.freequencies"],
-  kym: ["xyz.vpavlin.kym"], qaku: ["xyz.vpavlin.qaku"], perun: ["xyz.vpavlin.perun"],
-  whisperbox: ["xyz.vpavlin.whisperbox"], foray: ["xyz.vpavlin.foray"], freequencies: ["xyz.vpavlin.freequencies"],
+// Pins are (package, signing certificate) — a package name alone can be taken by a sideloaded fake
+// when the real app isn't installed (re-check R-1). Certificates are base64(sha256(cert)), as in the
+// callerKey. Freequencies is built on Scala's and Kith's data (scala-sdk, kith-sdk) and signs in their
+// spaces, so it is the one app allowed into those two namespaces besides their own.
+const CERT = {
+  scalaPerun: "Te8ucZrdRI0Crcq2t5v8K/a8B/jOb+IsViftMJztCmw=", kith: "s3XXlaEvuHts+AQlEhGa2HcdFjtm6e8FJtvgGqB316g=",
+  kym: "zmTIXku7QPy69H0qe6DxShWdfv1wukujlnYNYayGZCU=", qaku: "61elU6XiS1kG3r/c8UPiQ5lrnUFJZJ6aGqx2dLArXi8=",
+  whisperbox: "yrDMBe1NeVbyWcAP5wy3dMLDpOac22TOQhv3Eg0BK9Q=", foray: "T6GWnPhagqMV7Qy8JGhnqMZwUe6K+j3O+PVXx3f88uc=",
+  freequencies: "ByUZdvBIIDF2j5x66boQz9NhBaTFvVj55ubudpk9Zwg=",
 };
-export function hdNamespace(appId: string, pkg: string): string {
-  if (appId && PINNED_IDS[appId]?.includes(pkg)) return appId;
-  if (appId && appId === pkg) return appId;
-  return pkg;
+const FQ = `xyz.vpavlin.freequencies|${CERT.freequencies}`;
+const PINNED_IDS: Record<string, string[]> = {
+  scala: [`xyz.vpavlin.scala|${CERT.scalaPerun}`, FQ], kith: [`xyz.vpavlin.kith|${CERT.kith}`, FQ],
+  kym: [`xyz.vpavlin.kym|${CERT.kym}`], qaku: [`xyz.vpavlin.qaku|${CERT.qaku}`], perun: [`xyz.vpavlin.perun|${CERT.scalaPerun}`],
+  whisperbox: [`xyz.vpavlin.whisperbox|${CERT.whisperbox}`], foray: [`xyz.vpavlin.foray|${CERT.foray}`], freequencies: [FQ],
+};
+/** Every other app gets a namespace bound to its package AND certificate, so a re-signed or fake copy
+ *  of an app never lands in the real one's identities. */
+export function hdNamespace(appId: string, pkg: string, cert: string): string {
+  if (appId && PINNED_IDS[appId]?.includes(`${pkg}|${cert}`)) return appId;
+  return `${pkg}|${cert}`;
 }
 const MAX_QUEUED_TOPICS = 64;   // per unapproved caller (audit L-4)
 
@@ -139,7 +149,7 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
         const g = grants.get(ck);
         const reply = (j: unknown) => { try { Bridge.hdReply(r.reqId, JSON.stringify(j)); } catch { /* */ } };
         if (!g?.granted) { reply({ error: "not approved" }); return; }
-        reply(await hdHandle(hdNamespace(g.appId, g.pkg), r.request || "{}", { mainSign: g.mainSign === true }));
+        reply(await hdHandle(hdNamespace(g.appId, g.pkg, g.cert), r.request || "{}", { mainSign: g.mainSign === true }));
       } else if (r.kind === "touch") {
         if (!grants.get(ck)?.granted && !pending.has(ck)) {
           pending.set(ck, { callerKey: ck, appId: r.appId || "", pkg: r.pkg, cert: r.cert, label: r.label });

@@ -26,11 +26,12 @@ object DeliveryHub {
   private fun dispatch(kind: String, data: Map<String, String?>) {
     val cb = toJs
     if (cb != null) { cb(kind, data); return }
-    val size = data.values.sumOf { (it?.length ?: 0).toLong() }
+    val size = sizeOf(data)
     synchronized(pending) {
       if (pending.size < PENDING_MAX && pendingBytes + size <= PENDING_MAX_BYTES) { pending.add(kind to data); pendingBytes += size }
     }
   }
+  private fun sizeOf(data: Map<String, String?>) = data.values.sumOf { (it?.length ?: 0).toLong() }
   fun flushPending() {
     if (toJs == null) return
     val drain: List<Pair<String, Map<String, String?>>>
@@ -55,7 +56,10 @@ object DeliveryHub {
   fun requestStoreSync(callerKey: String) { dispatch("storeSync", mapOf("callerKey" to callerKey)) }
   fun unregister(callerKey: String) {
     callbacks.remove(callerKey)
-    synchronized(pending) { pending.removeAll { it.second["callerKey"] == callerKey } }  // drop its un-flushed requests
+    synchronized(pending) {   // drop its un-flushed requests, and their bytes (re-check R-2)
+      val gone = pending.filter { it.second["callerKey"] == callerKey }
+      pending.removeAll(gone.toSet()); pendingBytes -= gone.sumOf { sizeOf(it.second) }
+    }
     dispatch("unregister", mapOf("callerKey" to callerKey))
   }
 

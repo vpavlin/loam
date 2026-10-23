@@ -226,7 +226,7 @@ export default function App() {
         {pending.map((c) => (
           <View key={c.callerKey} style={s.reqCard}>
             <Text style={s.appName}>{c.label}</Text>
-            <Text style={s.appMeta}>{c.pkg}{"\n"}identities under “{hdNamespace(c.appId, c.pkg)}” · cert {shortCert(c.cert)}</Text>
+            <Text style={s.appMeta}>{c.pkg}{"\n"}identities under “{hdNamespace(c.appId, c.pkg, c.cert).split("|")[0]}” · cert {shortCert(c.cert)}</Text>
             <Text style={s.ask}>wants to use the shared node</Text>
             <View style={s.row2}>
               <TouchableOpacity style={[s.btn, s.deny]} onPress={() => deny(c.callerKey)}><Text style={s.btnT}>Deny</Text></TouchableOpacity>
@@ -262,7 +262,7 @@ export default function App() {
                 />
                 <Text style={s.cacheLabel}>{g.mainSign ? "Can sign as your main identity" : "Can't sign as your main identity"}</Text>
               </View>
-              <Text style={[s.appMeta, { marginTop: 4 }]}>identities under “{hdNamespace(g.appId, g.pkg)}”</Text>
+              <Text style={[s.appMeta, { marginTop: 4 }]}>identities under “{hdNamespace(g.appId, g.pkg, g.cert).split("|")[0]}”</Text>
             </View>
             <TouchableOpacity style={[s.btn, s.deny]} onPress={() => revoke(g.callerKey)}><Text style={s.btnT}>Revoke</Text></TouchableOpacity>
           </View>
