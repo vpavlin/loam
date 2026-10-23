@@ -40,6 +40,7 @@ class LogosDeliveryService : Service() {
   // (approve/revoke) as soon as it runs; this is only the early prime.
   override fun onCreate() {
     super.onCreate()
+    xyz.vpavlin.loam.storage.StorageEngine.init(this)
     primeGrants()
     ensureJs()
   }
@@ -99,6 +100,7 @@ class LogosDeliveryService : Service() {
   companion object {
     private const val TAG = "LOAMBOOT"
     private const val BOOT_TASK = "LoamBoot"   // == BOOT_TASK in src/lib/boot.ts
+    private const val NOT_APPROVED = "{\"state\":\"failed\",\"error\":\"not approved\"}"
     @Volatile private var bootTaskCtx = 0
   }
   private fun sha256(sig: Signature): String {
@@ -149,6 +151,26 @@ class LogosDeliveryService : Service() {
       }
       DeliveryHub.hdCall(ck, requestJson, cb)
     }
+    // ── Logos Storage (ADR 0020): same consent as Delivery; an unapproved caller gets nothing ──
+    private fun storageGate(): String? {
+      val c = caller(); val ck = key(c)
+      if (DeliveryHub.isAuthorized(ck)) return ck
+      DeliveryHub.touch(ck, c.pkg, c.cert, c.label)
+      return null
+    }
+    override fun storageFetch(appId: String, cid: String, peersJson: String): String {
+      val ck = storageGate() ?: return NOT_APPROVED
+      return xyz.vpavlin.loam.storage.StorageEngine.fetch(ck, cid, peersJson)
+    }
+    override fun storageStatus(appId: String, cid: String): String =
+      if (storageGate() == null) NOT_APPROVED else xyz.vpavlin.loam.storage.StorageEngine.status(cid)
+    override fun storageCancel(appId: String, cid: String): String =
+      if (storageGate() == null) NOT_APPROVED else xyz.vpavlin.loam.storage.StorageEngine.cancel(cid)
+    override fun storageOpen(appId: String, cid: String): android.os.ParcelFileDescriptor? =
+      if (storageGate() == null) null else xyz.vpavlin.loam.storage.StorageEngine.open(cid)
+    override fun storageInfo(appId: String): String =
+      if (storageGate() == null) NOT_APPROVED else xyz.vpavlin.loam.storage.StorageEngine.info()
+
     override fun metrics(): String {
       val c = caller(); val ck = key(c)
       if (DeliveryHub.isAuthorized(ck)) return DeliveryHub.metricsJson
