@@ -120,6 +120,28 @@ interface ILogosDelivery {
 interface ILogosDeliveryCallback { oneway void onMessage(String topic, String candidatesJson); }
 ```
 
+## Files from Logos Storage
+
+Loam ≥ 0.0.58 fetches **CIDs** from Logos Storage for approved apps, as background jobs that keep going
+when your app is closed (loam-transport ADR 0020). The same binding and consent as Delivery.
+
+**SDK path** (`loam-transport` with `src/loam-storage.ts`):
+```ts
+import * as loam from "./src/lib/loam-transport-pkg/src/loam-storage";
+if (await loam.available()) {                       // Loam with Storage, switched on, you're approved
+  await loam.fetch(cid, [{ peerId, addrs, spr }]);  // start or join the job; peers that hold it are dialled first
+  let st = await loam.status(cid);                  // poll: queued | fetching (bytes/total) | done | failed | cancelled
+  // … when st.state === "done":
+  await loam.saveTo(cid, `${filesDir}/thing.bin`);  // copy out of Loam's cache into a file you own
+}
+```
+Check what you got yourself: Loam only moves bytes. Keep your own fallback for phones without Loam.
+
+**Raw path:** the five methods appended to `ILogosDelivery` after `setClientFeatures` (never insert
+above: Binder transaction ids are positional): `storageFetch(appId, cid, peersJson)`,
+`storageStatus(appId, cid)`, `storageCancel(appId, cid)`, `ParcelFileDescriptor storageOpen(appId, cid)`
+(read-only, only when done), `storageInfo(appId)`. JSON returns; an older Loam answers null.
+
 ## Payload & topic conventions
 
 - **`sealed`** — opaque bytes you produce (per-app AEAD, e.g. XChaCha20-Poly1305). A foreign

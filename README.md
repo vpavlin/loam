@@ -118,6 +118,26 @@ with Keycard delegated on-card to Alisher's `keycard` module at `m/43'/60'/1582'
 the phone signs at, so one physical card is one identity across phone + desktop.** The mobile
 registry converges onto the same service over time.
 
+## Files from Logos Storage (loam-transport ADR 0020, Loam ≥ 0.0.58)
+
+Loam also runs **one Logos Storage fetch client for the phone**, beside the Delivery node. Apps ask it
+for a **CID**; Loam fetches it as a **background job** in its foreground service, so the download keeps
+going when the app that asked is closed or killed. When the app comes back, the finished file is in
+Loam's cache and is handed over without touching the network. A file fetched once is served to any app.
+
+- **Loam knows CIDs, not file types.** It moves bytes; each app checks what it gets (Backpack checks
+  every APK's SHA-256, signer, package and versionCode against its signed index).
+- **Same consent as Delivery:** an unapproved app gets nothing.
+- **One job at a time**, size read from the manifest before any data block, cancel, a 1 GiB LRU cache of
+  finished files, offline fails fast. libstorage is logos-storage-nim PR #1540.
+- **The Storage card in the Loam UI** (0.0.59) shows the node's state, running downloads with their
+  progress and the app that asked, the cache, an on/off switch (off: apps fall back to their own
+  node) and Clear cache.
+- **For apps:** `loam-transport/src/loam-storage.ts` — `fetch(cid, peers)`, `status`, `cancel`,
+  `saveTo(cid, path)`, `info()`; see [INTEGRATE.md](INTEGRATE.md#files-from-logos-storage).
+- First user: [Backpack](https://vpavlin.github.io/backpack/) (app repos on Logos Storage); a demo video
+  is on its site.
+
 ## What the demo proves (`node demo/demo.mjs` — 11/11)
 
 1. **One node, two shards.** A real qaku topic hashes to shard 0 and a real kym topic to shard 7; the single node spans `{0, 7}` at once.
