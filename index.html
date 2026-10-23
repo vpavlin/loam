@@ -315,6 +315,12 @@
         <p>Live Q&amp;A for a room — ask, upvote, answer — even on a saturated conference network.</p>
         <span class="tag mono">q&amp;a · events</span>
       </a>
+      <a class="card" href="https://vpavlin.github.io/backpack/">
+        <img class="glyph" src="assets/backpack.svg" alt="Backpack logo" width="46" height="46">
+        <h3>Backpack</h3>
+        <p>An F-Droid-like app store whose repositories live in Logos Storage. Updates arrive over Loam; big downloads run in Loam's Storage service, even with Backpack closed.</p>
+        <span class="tag mono">apps · storage · has a site ↗</span>
+      </a>
       <a class="card" href="https://github.com/vpavlin/perun">
         <img class="glyph" src="assets/perun.png" alt="Perun logo" width="46" height="46">
         <h3>Perun</h3>
@@ -384,6 +390,37 @@
         <p>Data lives on your devices as sealed bytes. The transport — Logos or Bluetooth — only ever moves ciphertext; it never needs to understand what it carries.</p>
       </div>
     </div>
+  </div>
+</section>
+
+<section id="storage">
+  <div class="wrap">
+    <p class="eyebrow">Files, too</p>
+    <h2 class="section-head" style="font-size:clamp(28px,4vw,40px);font-weight:600;margin-top:12px">One Storage node for the phone.</h2>
+    <p style="color:var(--ink-soft);margin-top:14px;max-width:62ch">Beside the Logos Delivery node, Loam runs a <b>Logos Storage</b> fetch client that every approved app can use. An app asks for a content ID; Loam fetches it as a background job in its own service, so the download keeps going when the app is closed, and a file fetched once is served to any app from the phone's cache. Loam only moves bytes: each app checks what it receives.</p>
+    <div class="principles" style="margin-top:26px">
+      <div class="pr">
+        <div class="n mono">CID</div>
+        <h3>Content IDs, not file types</h3>
+        <p>Loam knows nothing about APKs, snapshots or attachments. Apps ask by hash and verify the bytes themselves.</p>
+      </div>
+      <div class="pr">
+        <div class="n mono">BG</div>
+        <h3>Keeps going in the background</h3>
+        <p>Jobs run in Loam's foreground service. Close the app that asked; when it comes back, the file is already here.</p>
+      </div>
+      <div class="pr">
+        <div class="n mono">UI</div>
+        <h3>You can see it and stop it</h3>
+        <p>The Storage card in Loam shows the node, downloads in progress and which app asked, the cache, an on/off switch and Clear cache.</p>
+      </div>
+      <div class="pr">
+        <div class="n mono">OK?</div>
+        <h3>Same consent as Delivery</h3>
+        <p>Only apps you approved in Loam get files. Turn Storage off and they fall back to their own node.</p>
+      </div>
+    </div>
+    <p style="color:var(--ink-soft);margin-top:22px">See it in action in <a href="https://vpavlin.github.io/backpack/#demo">Backpack's demo video</a> · for developers: <a href="https://github.com/vpavlin/loam/blob/feat/storage/INTEGRATE.md#files-from-logos-storage">INTEGRATE.md</a> · design: <a href="https://github.com/vpavlin/loam-transport/blob/docs/adr-0020-storage-jobs/docs/adr/0020-logos-storage-in-loam.md">ADR 0020</a></p>
   </div>
 </section>
 
