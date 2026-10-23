@@ -6,7 +6,7 @@
 //     AIDL methods live in native/deliveryservice).
 // LOAM_EMU=1 also copies the x86_64 build (emulator tests of the Storage side only: the Delivery node
 // is arm64-only and won't start there) and adds x86_64 to the ABI filter.
-const { withDangerousMod, withAppBuildGradle } = require("@expo/config-plugins");
+const { withDangerousMod, withAppBuildGradle, withMainApplication } = require("@expo/config-plugins");
 const fs = require("fs");
 const path = require("path");
 
@@ -47,4 +47,16 @@ const withEmuAbi = (config) =>
     return cfg;
   });
 
-module.exports = (config) => withEmuAbi(withCopy(config));
+const PACKAGE = "xyz.vpavlin.loam.storage.LoamStoragePackage";
+const withPackage = (config) =>
+  withMainApplication(config, (cfg) => {
+    let src = cfg.modResults.contents;
+    if (src.includes(PACKAGE)) return cfg;
+    if (/PackageList\(this\)\.packages\.apply\s*\{/.test(src)) src = src.replace(/(PackageList\(this\)\.packages\.apply\s*\{)/, `$1\n            add(${PACKAGE}())`);
+    else if (/return\s+PackageList\(this\)\.packages\b(?!\.)/.test(src)) src = src.replace(/return\s+PackageList\(this\)\.packages\b(?!\.)/, `return PackageList(this).packages.apply {\n            add(${PACKAGE}())\n          }`);
+    else throw new Error("withLoamStorage: could not find PackageList(this).packages");
+    cfg.modResults.contents = src;
+    return cfg;
+  });
+
+module.exports = (config) => withPackage(withEmuAbi(withCopy(config)));

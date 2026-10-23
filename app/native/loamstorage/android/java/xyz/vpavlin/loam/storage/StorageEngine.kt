@@ -60,6 +60,30 @@ object StorageEngine {
   private val knownSprs = LinkedHashSet<String>()
 
   fun init(ctx: Context) { if (!::app.isInitialized) app = ctx.applicationContext }
+
+  // ── the user's switch (Loam UI). Off: no new jobs, running ones cancelled; apps are told and fall back
+  // to their own node. Remembered across restarts. The node itself can't be stopped and restarted in one
+  // process (libstorage), so "off" leaves a started node idle until Loam's process ends.
+  private fun prefs() = app.getSharedPreferences("loam-storage", Context.MODE_PRIVATE)
+  val enabled: Boolean get() = prefs().getBoolean("enabled", true)
+  fun setEnabled(on: Boolean) {
+    prefs().edit().putBoolean("enabled", on).apply()
+    if (!on) for (j in jobs.values) if (j.state == "queued" || j.state == "fetching") cancel(j.cid)
+  }
+  /** Drop every finished file (not running jobs' partial files). Returns bytes freed. */
+  fun clearCache(): Long {
+    var freed = 0L
+    cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") }?.forEach { freed += it.length(); it.delete() }
+    jobs.entries.removeIf { it.value.state == "done" || it.value.state == "failed" || it.value.state == "cancelled" }
+    return freed
+  }
+  private fun nodeState(): String = when {
+    !enabled -> "off"
+    nodeError != null -> "failed"
+    node != 0L && jobs.values.any { it.state == "fetching" } -> "fetching"
+    node != 0L -> "running"
+    else -> "idle"
+  }
   private fun cacheDir() = File(app.filesDir, "loam-storage/cache").apply { mkdirs() }
   private fun nodeDir() = File(app.filesDir, "loam-storage/node")
   private fun cached(cid: String) = File(cacheDir(), cid)
@@ -75,9 +99,11 @@ object StorageEngine {
   /** Start or join the job for `cid`. peersJson: [{peerId, addrs:[…], spr?}] (≤ 8, checked). */
   fun fetch(callerKey: String, cid: String, peersJson: String): String {
     if (!CID.matches(cid)) return err("bad cid")
+    if (!enabled) return err("Storage is turned off in Loam")
     val f = cached(cid)
     if (f.isFile) { f.setLastModified(System.currentTimeMillis()); return JSONObject().put("cid", cid).put("state", "done").put("bytes", f.length()).put("total", f.length()).toString() }
-    val job = jobs.compute(cid) { _, old -> if (old == null || old.state == "failed" || old.state == "cancelled") Job(cid) else old }!!
+    // a "done" job whose file is gone (cache cleared or evicted) starts over
+    val job = jobs.compute(cid) { _, old -> if (old == null || old.state == "failed" || old.state == "cancelled" || old.state == "done") Job(cid) else old }!!
     job.callers.add(callerKey)
     parsePeers(peersJson, job)
     synchronized(job) { if (job.state == "queued" && !job.queued) { job.queued = true; worker.execute { run(job) } } }
@@ -85,7 +111,7 @@ object StorageEngine {
   }
 
   fun status(cid: String): String {
-    jobs[cid]?.let { return it.json() }
+    jobs[cid]?.let { if (it.state != "done" || cached(cid).isFile) return it.json() }
     val f = cached(cid)
     return if (f.isFile) JSONObject().put("cid", cid).put("state", "done").put("bytes", f.length()).put("total", f.length()).toString()
     else JSONObject().put("cid", cid).put("state", "none").toString()
@@ -111,9 +137,10 @@ object StorageEngine {
 
   fun info(): String {
     val files = cacheDir().listFiles()?.filter { it.isFile && !it.name.endsWith(".part") } ?: emptyList()
-    return JSONObject().put("running", node != 0L).put("online", online()).put("cacheBytes", files.sumOf { it.length() })
+    return JSONObject().put("enabled", enabled).put("state", nodeState()).put("running", node != 0L).put("online", online()).put("cacheBytes", files.sumOf { it.length() })
       .put("cacheFiles", files.size).put("cacheCap", cacheCap)
-      .put("jobs", JSONArray(jobs.values.filter { it.state == "queued" || it.state == "fetching" }.map { JSONObject(it.json()) }))
+      .put("jobs", JSONArray(jobs.values.filter { it.state == "queued" || it.state == "fetching" }.map { j ->
+        JSONObject(j.json()).put("apps", JSONArray(j.callers.map { it.substringBefore('|') })) }))
       .apply { nodeError?.let { put("nodeError", it) } }.toString()
   }
 
@@ -174,16 +201,12 @@ object StorageEngine {
   }
   private fun err(msg: String) = JSONObject().put("state", "failed").put("error", msg).toString()
 
-  // progress = the larger of the file written and the block store's growth (fetch fills the store)
-  private fun startProgress(job: Job, part: File): Thread {
-    val store = nodeDir(); val base = dirSize(store)
-    return Thread {
-      try { while (!Thread.currentThread().isInterrupted) {
-        job.bytes = minOf(job.total, maxOf(job.bytes, part.length(), dirSize(store) - base)); Thread.sleep(1000)
-      } } catch (_: InterruptedException) {}
-    }.apply { isDaemon = true; start() }
-  }
-  private fun dirSize(d: File): Long = try { d.walkTopDown().filter { it.isFile }.sumOf { it.length() } } catch (_: Throwable) { 0L }
+  // progress = bytes of this file written so far (download_stream writes as blocks arrive). The block
+  // store's growth also counts other fetches running in the background, so it ran ahead of the truth.
+  private fun startProgress(job: Job, part: File): Thread = Thread {
+    try { while (!Thread.currentThread().isInterrupted) { job.bytes = minOf(job.total, part.length()); Thread.sleep(1000) } }
+    catch (_: InterruptedException) {}
+  }.apply { isDaemon = true; start() }
 
   // ── the node: started once per process, never restarted in-process ─────────────────────────────
   @Synchronized private fun ensureNode(sprs: List<String>): Long? {

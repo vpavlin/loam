@@ -5,6 +5,7 @@ import * as Notifications from "expo-notifications";
 import * as Clipboard from "expo-clipboard";
 import { serviceBridgeAvailable, lists, approve, deny, revoke, setCache, Client } from "./src/lib/service-bridge";
 import { IdentityCard } from "./src/components/IdentityCard";
+import { StorageCard } from "./src/components/StorageCard";
 import { getBootState, onBootState, uiAttached, setMeshForced, setTelemetrySecret, setTelemetryEnabled, dismissCrash, Mode } from "./src/lib/boot";
 
 // The device-wide shared delivery node runs ONE Loam node in a foreground service; other apps
@@ -169,6 +170,9 @@ export default function App() {
           mesh with the internet still up.
         </Text>
       </View>
+
+      {/* ── Logos Storage (files for apps, background downloads) ──────────── */}
+      <StorageCard s={s} C={C} />
 
       {/* ── LoRa (planned) ──────────────────────────────────────────────── */}
       <View style={[s.bearer, s.bearerPlanned]}>
