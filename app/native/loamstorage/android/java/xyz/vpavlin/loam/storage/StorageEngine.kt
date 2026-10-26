@@ -9,7 +9,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * One Logos Storage fetch client for the whole phone (loam-transport ADR 0020, amended 2026-10-23).
@@ -25,7 +27,9 @@ import java.util.concurrent.Executors
  *    next one); the cache is the finished files, not the block store;
  *  - the size is read from the manifest before any data block is fetched;
  *  - cancel runs on a second thread (the storage thread is the one blocked in the download);
- *  - one job at a time (libstorage's calls block); FIFO queue.
+ *  - one job at a time (libstorage's calls block); FIFO queue;
+ *  - a job that gets no data for STALL_MS (a network change can leave a libstorage call waiting for ever)
+ *    fails as "stalled" and the queue moves to a fresh worker thread, so the app's retry can start over.
  */
 object StorageEngine {
   private const val TAG = "LOAMSTORAGE"
@@ -35,8 +39,11 @@ object StorageEngine {
   const val MAX_FILE = 512L shl 20            // one CID at most 512 MiB
   @Volatile var cacheCap = 1L shl 30          // 1 GiB, LRU
   private const val KEEP_UNOPENED_MS = 3_600_000L   // a finished, never-opened file survives eviction for 1 h
+  private const val STALL_MS = 180_000L       // no new data for 3 min while fetching = stalled
+  private val serials = AtomicLong()
 
   class Job(val cid: String) {
+    val serial = serials.incrementAndGet()   // names this job's .part file: a stalled job's thread may still write its own
     @Volatile var state = "queued"            // queued | fetching | done | failed | cancelled
     @Volatile var bytes = 0L
     @Volatile var total = 0L
@@ -44,15 +51,19 @@ object StorageEngine {
     @Volatile var cancelled = false
     @Volatile var queued = false
     @Volatile var finishedAt = 0L
+    @Volatile var activeAt = 0L               // when data last arrived (or the job started fetching)
     val callers: MutableSet<String> = ConcurrentHashMap.newKeySet()
     val peers = ArrayList<Pair<String, Array<String>>>()
     fun json(): String = JSONObject().put("cid", cid).put("state", state).put("bytes", bytes).put("total", total)
-      .apply { error?.let { put("error", it) } }.toString()
+      .apply { error?.let { put("error", it) }; if (state == "fetching" && activeAt > 0) put("idleMs", System.currentTimeMillis() - activeAt) }.toString()
   }
 
   private lateinit var app: Context
   private val jobs = ConcurrentHashMap<String, Job>()
-  private val worker = Executors.newSingleThreadExecutor { r -> Thread(null, r, "loam-storage", 16L shl 20) }
+  private fun newWorker(): ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(null, r, "loam-storage", 16L shl 20) }
+  @Volatile private var worker = newWorker()
+  private val workerLock = Any()   // not the object's monitor: ensureNode() holds that and may be the call that hangs
+  private fun submit(r: Runnable) = synchronized(workerLock) { worker.execute(r) }
   private val side = Executors.newSingleThreadExecutor { r -> Thread(null, r, "loam-storage-side", 1L shl 20) }
   @Volatile private var node = 0L
   @Volatile private var nodeError: String? = null
@@ -70,7 +81,7 @@ object StorageEngine {
   }
   /** Partial files whose job isn't fetching are leftovers of a crash or a kill (re-check R-4). */
   private fun sweepParts() {
-    cacheDir().listFiles()?.filter { it.name.endsWith(".part") && jobs[it.name.removeSuffix(".part")]?.state != "fetching" }?.forEach { it.delete() }
+    cacheDir().listFiles()?.filter { it.name.endsWith(".part") && jobs[it.name.substringBefore('.')]?.state != "fetching" }?.forEach { it.delete() }
   }
   /** Drop every finished file (not running jobs' partial files). Returns bytes freed. */
   fun clearCache(): Long {
@@ -136,7 +147,7 @@ object StorageEngine {
     val job = jobs.compute(cid) { _, old -> if (old == null || old.state == "failed" || old.state == "cancelled" || old.state == "done") Job(cid) else old }!!
     job.callers.add(callerKey)
     parsePeers(peersJson, job)
-    synchronized(job) { if (job.state == "queued" && !job.queued) { job.queued = true; worker.execute { run(job) } } }
+    synchronized(job) { if (job.state == "queued" && !job.queued) { job.queued = true; submit { run(job) } } }
     return job.json()
   }
 
@@ -192,10 +203,13 @@ object StorageEngine {
 
   private fun run(job: Job) {
     val cid = job.cid
+    val part = File(cacheDir(), "$cid.${job.serial}.part")
+    var progress: Thread? = null
     try {
       if (job.cancelled) { job.state = "cancelled"; return }
       if (!online()) { fail(job, "offline"); return }
-      job.state = "fetching"
+      job.state = "fetching"; job.activeAt = System.currentTimeMillis()
+      progress = startProgress(job, part)
       val c = ensureNode() ?: run { fail(job, "node: ${nodeError ?: "did not start"}"); return }
       for ((peerId, addrs) in job.peers) {
         if (job.cancelled) break
@@ -210,8 +224,7 @@ object StorageEngine {
       if (size > MAX_FILE || size > cacheCap) { fail(job, "too large ($size bytes)"); return }
       job.total = size
       if (!makeRoom(size)) { fail(job, "cache full"); return }
-      val part = File(cacheDir(), "$cid.part"); part.delete()
-      val progress = startProgress(job, part)
+      part.delete()
       try {
         var r = JSONObject(StorageNative.storageFetch(c, cid))
         if (!r.optBoolean("ok") && !job.cancelled) { fail(job, classify(r.optString("err"))); return }
@@ -221,7 +234,7 @@ object StorageEngine {
         r = JSONObject(StorageNative.storageDownloadStream(c, cid, 65536, false, part.absolutePath))
         if (job.cancelled) { job.state = "cancelled"; return }
         if (!r.optBoolean("ok")) { fail(job, classify(r.optString("err"))); return }
-      } finally { progress.interrupt() }
+      } finally { progress?.interrupt() }
       if (part.length() != size) { fail(job, "got ${part.length()} of $size bytes"); return }
       val dst = cached(cid)
       if (!part.renameTo(dst)) { fail(job, "could not store the file"); return }
@@ -231,9 +244,11 @@ object StorageEngine {
     } catch (t: Throwable) {
       fail(job, t.message ?: "storage error")
     } finally {
+      progress?.interrupt()
       job.queued = false; job.finishedAt = System.currentTimeMillis()
-      if (job.state != "done") File(cacheDir(), "$cid.part").delete()
-      if (job.state == "cancelled" || job.state == "failed") side.execute { try { if (node != 0L) StorageNative.storageDelete(node, cid) } catch (_: Throwable) {} }
+      if (job.state != "done") part.delete()
+      // a stalled job's thread can come back long after a new job for the same CID started: leave its blocks
+      if (jobs[cid] === job && (job.state == "cancelled" || job.state == "failed")) side.execute { try { if (node != 0L) StorageNative.storageDelete(node, cid) } catch (_: Throwable) {} }
     }
   }
 
@@ -248,10 +263,39 @@ object StorageEngine {
 
   // progress = bytes of this file written so far (download_stream writes as blocks arrive). The block
   // store's growth also counts other fetches running in the background, so it ran ahead of the truth.
+  // It is also the stall watchdog: "data arrived" = this file grew, or the node's block store did (the
+  // fetch phase fills the block store before anything is written to the file).
   private fun startProgress(job: Job, part: File): Thread = Thread {
-    try { while (!Thread.currentThread().isInterrupted) { job.bytes = minOf(job.total, part.length()); Thread.sleep(1000) } }
-    catch (_: InterruptedException) {}
+    try {
+      var lastPart = -1L; var lastStore = -1L; var tick = 0
+      while (!Thread.currentThread().isInterrupted) {
+        val p = part.length()
+        job.bytes = minOf(job.total, p)
+        if (p != lastPart) { lastPart = p; job.activeAt = System.currentTimeMillis() }
+        if (tick++ % 5 == 0) { val st = dirBytes(nodeDir()); if (st != lastStore) { lastStore = st; job.activeAt = System.currentTimeMillis() } }
+        if (job.state == "fetching" && System.currentTimeMillis() - job.activeAt > STALL_MS) { stall(job); return@Thread }
+        Thread.sleep(1000)
+      }
+    } catch (_: InterruptedException) {}
   }.apply { isDaemon = true; start() }
+
+  private fun dirBytes(d: File): Long = try { d.walkTopDown().filter { it.isFile }.sumOf { it.length() } } catch (_: Throwable) { 0L }
+
+  /** No data for STALL_MS: fail the job (apps see "failed: stalled" and may ask again) and move the queue to
+   *  a new worker thread — the old one may stay blocked inside libstorage until the call gives up, if ever. */
+  private fun stall(job: Job) { synchronized(workerLock) {
+    if (jobs[job.cid] !== job || job.state != "fetching") return
+    Log.w(TAG, "${job.cid.takeLast(10)}: stalled, no data for ${STALL_MS / 1000} s")
+    jobs[job.cid] = Job(job.cid).apply {
+      state = "failed"; error = "stalled: no data for ${STALL_MS / 60_000} min (network changed?)"
+      callers.addAll(job.callers); finishedAt = System.currentTimeMillis()
+    }
+    job.cancelled = true
+    side.execute { try { if (node != 0L) StorageNative.storageDownloadCancel(node, job.cid) } catch (t: Throwable) { Log.w(TAG, "cancel", t) } }
+    val old = worker
+    worker = newWorker()
+    for (r in old.shutdownNow()) worker.execute(r)   // queued jobs move over; the blocked thread ends when its call returns
+  } }
 
   // ── the node: started once per process, never restarted in-process ─────────────────────────────
   // The shared node's bootstrap is never taken from an app (audit L-7): apps' peers are only dialled
