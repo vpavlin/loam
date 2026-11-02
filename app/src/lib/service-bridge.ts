@@ -26,7 +26,10 @@ const GRANTS = (FileSystem.documentDirectory || "") + "logos-delivery-grants.jso
 // oldest are dropped and the app reconciles the gap. Per-app toggle = future UI.
 const CACHE_LIMIT = 1000;
 export type Client = { callerKey: string; appId: string; pkg: string; cert: string; label: string };
-type Grant = Client & { granted: boolean; cache?: boolean; mainSign?: boolean };
+// topics: every topic the approved app subscribed (Loam 0.0.66), kept until the app unsubscribes it or the
+// app is unapproved. At start Loam joins them for the app and caches what arrives, whoever started Loam.
+type Grant = Client & { granted: boolean; cache?: boolean; mainSign?: boolean; topics?: string[] };
+const MAX_SAVED_TOPICS = 256;   // per app (the AIDL layer caps the same)
 
 // ── HD identity namespace (audit L-1) ────────────────────────────────────────────────────────────
 // The app id a client sends is only a claim. Identities derive under a namespace, so the namespace
@@ -70,6 +73,42 @@ function pushAuthorized() {
 async function persist() {
   try { await FileSystem.writeAsStringAsync(GRANTS, JSON.stringify([...grants.values()])); } catch { /* */ }
 }
+// Topic changes come in bursts (an app joining its rooms): write once, a moment later.
+let persistTimer: any = null;
+function persistSoon() {
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => { persistTimer = null; persist(); }, 2000);
+}
+function rememberTopic(ck: string, topic: string) {
+  const g = grants.get(ck); if (!g?.granted) return;
+  const ts = g.topics ?? (g.topics = []);
+  if (ts.includes(topic) || ts.length >= MAX_SAVED_TOPICS) return;
+  ts.push(topic); persistSoon();
+}
+function forgetTopic(ck: string, topic: string) {
+  const g = grants.get(ck); if (!g?.topics) return;
+  const i = g.topics.indexOf(topic); if (i < 0) return;
+  g.topics.splice(i, 1); persistSoon();
+}
+const cacheLimitOf = (ck: string) => grants.get(ck)?.cache === false ? 0 : CACHE_LIMIT;
+
+// Loam 0.0.66: at start, every approved app that isn't connected gets its tenant back DETACHED with its saved
+// topics, so Loam receives and caches its messages whether or not the app (or which app) started Loam.
+// Then one store pull per app fills the cache with what was sent while Loam was down. Spaced out, after the
+// node had time to find peers; an app that connects meanwhile gets the pull's results live.
+const RESTORE_PULL_DELAY_MS = 15_000;
+async function restoreApprovedApps() {
+  const todo: string[] = [];
+  for (const g of grants.values()) {
+    if (!g.granted || cacheLimitOf(g.callerKey) === 0 || !g.topics?.length) continue;
+    if (active.has(g.callerKey)) continue;
+    try { await transport.restoreClient(g.callerKey, g.topics, CACHE_LIMIT); todo.push(g.callerKey); } catch { /* */ }
+  }
+  try { (globalThis as any).__loamMark?.(`restored ${todo.length} app(s) for caching`); } catch { /* */ }
+  setTimeout(async () => {
+    for (const ck of todo) { try { await transport.clientStoreSync(ck); } catch { /* */ } }
+  }, RESTORE_PULL_DELAY_MS);
+}
 let grantsLoaded = false;
 async function loadGrants() {
   if (grantsLoaded) return;
@@ -105,7 +144,7 @@ function activate(callerKey: string) {
       Bridge.deliverMeta(callerKey, topic, candidatesJson, JSON.stringify({ ts: meta.ts, source: meta.source, bearer: meta.bearer }));
     else Bridge.deliver(callerKey, topic, candidatesJson);
     return true;   // service is a blind pipe; the client opens with its own key
-  }, { cacheLimit: grants.get(callerKey)?.cache === false ? 0 : CACHE_LIMIT });
+  }, { cacheLimit: cacheLimitOf(callerKey) });
 }
 
 export async function initServiceBridge(change: () => void): Promise<boolean> {
@@ -136,14 +175,32 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
           onChange && onChange();
         }
       } else if (r.kind === "subscribe") {
-        if (active.has(ck)) await transport.clientSubscribe(ck, r.topic);
+        const granted = !!grants.get(ck)?.granted;
+        // An approved app whose register this JS never saw (Loam's JS restarted, or it missed it): the
+        // native layer says it is connected (live) → treat it as active instead of queueing forever.
+        if (!active.has(ck) && granted && r.live === "1") activate(ck);
+        if (active.has(ck)) { await transport.clientSubscribe(ck, r.topic); rememberTopic(ck, r.topic); }
+        else if (granted) {   // approved but not connected: join it for the app and cache (Loam 0.0.66)
+          rememberTopic(ck, r.topic);
+          if (cacheLimitOf(ck) > 0) { try { await transport.restoreClient(ck, [r.topic], CACHE_LIMIT); } catch { /* */ } }
+        }
         else { const q = queued.get(ck) || []; if (q.length < MAX_QUEUED_TOPICS && !q.includes(r.topic)) q.push(r.topic); queued.set(ck, q); }   // buffer until approved (bounded)
+      } else if (r.kind === "unsubscribe") {
+        forgetTopic(ck, r.topic);
+        const q = queued.get(ck); if (q) queued.set(ck, q.filter((t) => t !== r.topic));
+        try { await transport.clientUnsubscribe(ck, r.topic); } catch { /* */ }
       } else if (r.kind === "send") {
         if (active.has(ck)) await transport.publishSealed(r.topic, toByteArray(r.sealedB64));   // ungranted sends dropped
       } else if (r.kind === "storeSync") {
         // Cold-start history pull for this client: run the node's store query and route each stored
         // message back to the client through the normal receive callback (folded like a live msg).
-        if (active.has(ck)) await transport.clientStoreSync(ck);
+        // An approved app that isn't active (its register was missed) still gets its pull: the results
+        // land in its cache and reach it as soon as it is connected (Loam 0.0.66; was silently dropped).
+        if (!active.has(ck) && grants.get(ck)?.granted) {
+          const saved = grants.get(ck)?.topics ?? [];
+          if (cacheLimitOf(ck) > 0 && saved.length) { try { await transport.restoreClient(ck, saved, CACHE_LIMIT); } catch { /* */ } }
+          if (transport.clientCacheInfo(ck).cacheLimit > 0) await transport.clientStoreSync(ck);
+        } else if (active.has(ck)) await transport.clientStoreSync(ck);
       } else if (r.kind === "hd") {
         // HD identity request (ADR 0001). Only approved apps, and ONLY in the app namespace recorded when
         // the owner approved them — a client can't ask for another app's identities by naming its appId.
@@ -162,8 +219,11 @@ export async function initServiceBridge(change: () => void): Promise<boolean> {
       }
     } catch { /* never throw in the bridge */ }
   });
+  // Approved apps get their topics joined + cached before any of them connects (Loam 0.0.66).
+  try { await restoreApprovedApps(); } catch { /* */ }
   // The request listener is now attached — tell native to replay any register/subscribe/send that
-  // was buffered while the JS/node was down (an app that bound & subscribed before Loam was running).
+  // was buffered while the JS/node was down (an app that bound & subscribed before Loam was running),
+  // and (0.0.66) the register + topics of every app already connected, so a restarted JS knows them.
   try { (Bridge as any).jsReady?.(); } catch { /* */ }
   return true;
 }
@@ -174,7 +234,7 @@ export async function approve(callerKey: string) {
   grants.set(callerKey, { ...c, granted: true, cache: true }); await persist(); pushAuthorized();
   pending.delete(callerKey);
   activate(callerKey);
-  for (const t of queued.get(callerKey) || []) { try { await transport.clientSubscribe(callerKey, t); } catch { /* */ } }
+  for (const t of queued.get(callerKey) || []) { try { await transport.clientSubscribe(callerKey, t); rememberTopic(callerKey, t); } catch { /* */ } }
   queued.delete(callerKey);
   onChange && onChange();
 }

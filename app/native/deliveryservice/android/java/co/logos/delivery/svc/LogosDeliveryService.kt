@@ -151,6 +151,18 @@ class LogosDeliveryService : Service() {
       DeliveryHub.send(ck, topic, Base64.encodeToString(sealed, Base64.NO_WRAP))
     }
     override fun requestStoreSync(appId: String) = DeliveryHub.requestStoreSync(key(caller()))
+    // Loam 0.0.66: an app checks what Loam holds for it, asks for a store pull that says whether it was
+    // taken, and can leave a topic. An unapproved caller learns only that it isn't approved.
+    override fun clientState(appId: String, topicsJson: String): String {
+      val c = caller(); val ck = key(c)
+      if (!DeliveryHub.isAuthorized(ck)) DeliveryHub.touch(ck, c.pkg, c.cert, c.label)
+      return DeliveryHub.clientState(ck, if (topicsJson.length > 65536) "[]" else topicsJson)
+    }
+    override fun requestStoreSyncChecked(appId: String): String = DeliveryHub.requestStoreSyncChecked(key(caller()))
+    override fun unsubscribe(appId: String, topic: String) {
+      if (topic.length > 256) return
+      DeliveryHub.unsubscribe(key(caller()), topic)
+    }
     override fun unregisterClient(appId: String) = DeliveryHub.unregister(key(caller()))
     override fun setClientFeatures(appId: String, features: Int): Int = DeliveryHub.setFeatures(key(caller()), features)
     override fun hdCall(appId: String, requestJson: String, cb: co.logos.delivery.IHdCallback) {

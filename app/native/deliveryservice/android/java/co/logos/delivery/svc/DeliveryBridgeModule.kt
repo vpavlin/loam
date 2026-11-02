@@ -10,6 +10,7 @@ class DeliveryBridgeModule(private val ctx: ReactApplicationContext) : ReactCont
   override fun getName() = "LogosDeliveryBridge"
 
   init {
+    DeliveryHub.jsAttached = false   // a new JS: requests buffer until it attaches its listener (jsReady)
     DeliveryHub.toJs = { kind, data ->
       val params = Arguments.createMap().apply {
         putString("kind", kind)
@@ -31,7 +32,7 @@ class DeliveryBridgeModule(private val ctx: ReactApplicationContext) : ReactCont
     DeliveryHub.deliver(callerKey, topic, candidatesJson)
   @ReactMethod fun deliverMeta(callerKey: String, topic: String, candidatesJson: String, metaJson: String) =
     DeliveryHub.deliverMeta(callerKey, topic, candidatesJson, metaJson)
-  @ReactMethod fun setMetrics(json: String) { DeliveryHub.metricsJson = json }
+  @ReactMethod fun setMetrics(json: String) { DeliveryHub.metricsJson = json; DeliveryHub.metricsAt = System.currentTimeMillis() }
   @ReactMethod fun hdReply(reqId: String, resultJson: String) = DeliveryHub.hdReply(reqId, resultJson)
   @ReactMethod fun setAuthorized(jsonArray: String) {
     val set = HashSet<String>()
