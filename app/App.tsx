@@ -7,6 +7,7 @@ import { serviceBridgeAvailable, lists, approve, deny, revoke, setCache, setMain
 import { IdentityCard } from "./src/components/IdentityCard";
 import { StorageCard } from "./src/components/StorageCard";
 import { getBootState, onBootState, uiAttached, setMeshForced, setTelemetrySecret, setTelemetryEnabled, dismissCrash, Mode } from "./src/lib/boot";
+import * as transport from "./src/lib/logos-transport";
 
 // The device-wide shared delivery node runs ONE Loam node in a foreground service; other apps
 // bind over AIDL and — once YOU approve them — sync through it. This screen presents the node as
@@ -77,6 +78,9 @@ export default function App() {
           `status: ${status}`,
           `${fg}`,
           `[logos network] peers:${net.peers} mesh:${net.mesh} rx:${net.rx} mode:${mode}`,
+          // the last Store pull (any app's) and the node's topics: a pending topic gets no live messages (2026-11-03)
+          `  ${transport.getStoreInfo() || "store: no pull yet"}`,
+          (() => { const t = transport.nodeTopicState(); return t ? `  topics: ${t.joined.length} joined${t.pending.length ? `, PENDING: ${t.pending.map((x) => "…" + x.slice(-14)).join("  ")}` : ", none pending"}` : "  topics: —"; })(),
           `[ble mesh] armed:${ble.armed} forced:${ble.forced} nearby:${ble.peers} tx:${ble.tx} rx:${ble.rx} delivered:${ble.delivered} dropped:${ble.dropped}`,
           `  own:  ${ble.own_t.join("  ") || "—"}`,
           `  tx:   ${ble.tx_t.join("  ") || "—"}`,
