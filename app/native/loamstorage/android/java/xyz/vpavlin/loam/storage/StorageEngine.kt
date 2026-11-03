@@ -30,6 +30,10 @@ import java.util.concurrent.atomic.AtomicLong
  *  - one job at a time (libstorage's calls block); FIFO queue;
  *  - a job that gets no data for STALL_MS (a network change can leave a libstorage call waiting for ever)
  *    fails as "stalled" and the queue moves to a fresh worker thread, so the app's retry can start over.
+ *  - a network change (Wi-Fi <-> mobile data, a new address) leaves libp2p's TCP connections looking open
+ *    until the kernel gives up on them, 15-30 min later: requests go into dead sockets. So on a change, and
+ *    on a stall, every connection is dropped (storage_disconnect_all) and a running job restarts by itself
+ *    on a fresh worker (blocks already fetched stay in the store, so it resumes), up to MAX_RESTARTS times.
  */
 object StorageEngine {
   private const val TAG = "LOAMSTORAGE"
@@ -40,6 +44,8 @@ object StorageEngine {
   @Volatile var cacheCap = 1L shl 30          // 1 GiB, LRU
   private const val KEEP_UNOPENED_MS = 3_600_000L   // a finished, never-opened file survives eviction for 1 h
   private const val STALL_MS = 180_000L       // no new data for 3 min while fetching = stalled
+  private const val RESTART_IDLE_MS = 90_000L  // no new data for 90 s: drop connections and restart the job
+  private const val MAX_RESTARTS = 3
   private val serials = AtomicLong()
 
   class Job(val cid: String) {
@@ -52,10 +58,11 @@ object StorageEngine {
     @Volatile var queued = false
     @Volatile var finishedAt = 0L
     @Volatile var activeAt = 0L               // when data last arrived (or the job started fetching)
+    @Volatile var restarts = 0                // automatic restarts after a network change or a stall
     val callers: MutableSet<String> = ConcurrentHashMap.newKeySet()
     val peers = ArrayList<Pair<String, Array<String>>>()
     fun json(): String = JSONObject().put("cid", cid).put("state", state).put("bytes", bytes).put("total", total)
-      .apply { error?.let { put("error", it) }; if (state == "fetching" && activeAt > 0) put("idleMs", System.currentTimeMillis() - activeAt) }.toString()
+      .apply { error?.let { put("error", it) }; if (state == "fetching" && activeAt > 0) put("idleMs", System.currentTimeMillis() - activeAt); if (restarts > 0) put("restarts", restarts) }.toString()
   }
 
   private lateinit var app: Context
@@ -68,7 +75,63 @@ object StorageEngine {
   @Volatile private var node = 0L
   @Volatile private var nodeError: String? = null
 
-  fun init(ctx: Context) { if (!::app.isInitialized) app = ctx.applicationContext }
+  fun init(ctx: Context) {
+    if (::app.isInitialized) return
+    app = ctx.applicationContext
+    watchNetwork()
+  }
+
+  // ── network changes ──────────────────────────────────────────────────────────────────────────
+  @Volatile private var lastNet: String? = null
+  @Volatile var netChanges = 0; private set
+  @Volatile private var lastDisconnectAt = 0L
+  private fun watchNetwork() = try {
+    val cm = app.getSystemService(ConnectivityManager::class.java)
+    cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+      // a default network is identified by its handle plus its addresses: Wi-Fi -> mobile data is a new
+      // handle; a new address on the same network (DHCP, a mobile handover) is a change too
+      override fun onLinkPropertiesChanged(n: android.net.Network, lp: android.net.LinkProperties) {
+        val key = n.networkHandle.toString() + "|" + lp.linkAddresses.map { it.address.hostAddress }.sorted().joinToString(",")
+        val prev = lastNet
+        lastNet = key
+        if (prev != null && prev != key) side.execute { networkChanged() }
+      }
+      override fun onLost(n: android.net.Network) { /* the next default network's onLinkPropertiesChanged follows */ }
+    })
+  } catch (t: Throwable) { Log.w(TAG, "network callback", t) }
+
+  /** Runs on `side`. Drop every peer connection, then restart running jobs over the new network. */
+  private fun networkChanged() {
+    netChanges++
+    Log.i(TAG, "network changed: dropping connections")
+    disconnectAll()
+    for (j in jobs.values) if (j.state == "fetching") restart(j, "network changed")
+  }
+  private fun disconnectAll() {
+    if (node == 0L) return
+    lastDisconnectAt = System.currentTimeMillis()
+    try { Log.i(TAG, "disconnect all: " + StorageNative.storageDisconnectAll(node)) } catch (t: Throwable) { Log.w(TAG, "disconnect all", t) }
+  }
+
+  /** Replace a running job with a fresh one for the same CID on a fresh worker thread (the old thread may be
+   *  stuck in libstorage). Its callers and peers carry over; the old job is cancelled. */
+  private fun restart(job: Job, why: String): Boolean { synchronized(workerLock) {
+    if (jobs[job.cid] !== job || job.state != "fetching" || job.restarts >= MAX_RESTARTS) return false
+    Log.w(TAG, "${job.cid.takeLast(10)}: restarting ($why), attempt ${job.restarts + 1}")
+    val fresh = Job(job.cid).apply {
+      restarts = job.restarts + 1; total = job.total; bytes = job.bytes
+      callers.addAll(job.callers); synchronized(job.peers) { peers.addAll(job.peers) }
+      queued = true
+    }
+    jobs[job.cid] = fresh
+    job.cancelled = true
+    side.execute { try { if (node != 0L) StorageNative.storageDownloadCancel(node, job.cid) } catch (t: Throwable) { Log.w(TAG, "cancel", t) } }
+    val old = worker
+    worker = newWorker()
+    for (r in old.shutdownNow()) worker.execute(r)
+    worker.execute { run(fresh) }
+    return true
+  } }
 
   // ── the user's switch (Loam UI). Off: no new jobs, running ones cancelled; apps are told and fall back
   // to their own node. Remembered across restarts. The node itself can't be stopped and restarted in one
@@ -207,6 +270,8 @@ object StorageEngine {
     var progress: Thread? = null
     try {
       if (job.cancelled) { job.state = "cancelled"; return }
+      var waited = 0
+      while (!online() && waited < 30 && !job.cancelled) { Thread.sleep(1000); waited++ }   // a network change in progress
       if (!online()) { fail(job, "offline"); return }
       job.state = "fetching"; job.activeAt = System.currentTimeMillis()
       progress = startProgress(job, part)
@@ -273,7 +338,12 @@ object StorageEngine {
         job.bytes = minOf(job.total, p)
         if (p != lastPart) { lastPart = p; job.activeAt = System.currentTimeMillis() }
         if (tick++ % 5 == 0) { val st = dirBytes(nodeDir()); if (st != lastStore) { lastStore = st; job.activeAt = System.currentTimeMillis() } }
-        if (job.state == "fetching" && System.currentTimeMillis() - job.activeAt > STALL_MS) { stall(job); return@Thread }
+        val idle = System.currentTimeMillis() - job.activeAt
+        if (job.state == "fetching" && idle > RESTART_IDLE_MS && job.restarts < MAX_RESTARTS) {
+          side.execute { if (System.currentTimeMillis() - lastDisconnectAt > 10_000) disconnectAll(); restart(job, "no data for ${idle / 1000} s") }
+          return@Thread
+        }
+        if (job.state == "fetching" && idle > STALL_MS) { stall(job); return@Thread }
         Thread.sleep(1000)
       }
     } catch (_: InterruptedException) {}

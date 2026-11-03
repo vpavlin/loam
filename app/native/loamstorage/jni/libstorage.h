@@ -285,6 +285,11 @@ extern "C"
         void *userData);
 
     // Cancel an ongoing download for `cid`.
+    int storage_disconnect_all(
+        void *ctx,
+        StorageCallback callback,
+        void *userData);
+
     int storage_download_cancel(
         void *ctx,
         const char *cid,

@@ -29,5 +29,6 @@ object StorageNative {
   external fun storageDownloadInit(ctx: Long, cid: String, chunkSize: Long, local: Boolean): String
   external fun storageDownloadStream(ctx: Long, cid: String, chunkSize: Long, local: Boolean, filePath: String): String
   external fun storageDownloadCancel(ctx: Long, cid: String): String
+  external fun storageDisconnectAll(ctx: Long): String
   external fun storageDelete(ctx: Long, cid: String): String
 }

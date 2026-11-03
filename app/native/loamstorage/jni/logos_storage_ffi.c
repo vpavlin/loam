@@ -231,6 +231,15 @@ DEFINE_CID_CALL(storageExists, storage_exists, SHORT_TIMEOUT_MS)
 // CID's blocks from the local store (a cancelled download's partial blocks).
 DEFINE_CID_CALL(storageDownloadCancel, storage_download_cancel, SHORT_TIMEOUT_MS)
 DEFINE_CID_CALL(storageDelete, storage_delete, SHORT_TIMEOUT_MS)
+// Close every peer connection (after a network change the old ones look open until TCP gives up).
+JNIEXPORT jstring JNICALL
+JNIFN(storageDisconnectAll)(JNIEnv *env, jobject thiz, jlong ctx) {
+    (void)thiz;
+    Resp *r = resp_alloc();
+    if (!r) return (*env)->NewStringUTF(env, OOM_JSON);
+    int accepted = storage_disconnect_all((void *)(intptr_t)ctx, (StorageCallback)storage_cb, r);
+    return call_finish(env, r, accepted, SHORT_TIMEOUT_MS);
+}
 // fetch (libstorage >= PR #1540): isPrivate=false, advertise=false — a fetch-only client neither
 // hides from nor advertises to the DHT.
 JNIEXPORT jstring JNICALL
