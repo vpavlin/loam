@@ -1,5 +1,7 @@
 # native/logosdelivery — the JNI bridge (supplied, not built here)
 
+**Source of the shipped `arm64-v8a/liblogosdelivery.so`:** https://github.com/vpavlin/logos-delivery/tree/loam/android-v0.38.1 (upstream `8ad99f10` v0.38.1 + the Android and SDS patches listed there; build recipe in its `WRITEUP.md`).
+
 This directory holds the prebuilt Logos delivery node + the hand-written JNI
 bridge that the Expo config plugin (`plugins/withLogosDelivery.js`) re-copies into
 `android/` on every `expo prebuild` (CNG wipes `android/`, so nothing hand-added
